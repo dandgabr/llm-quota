@@ -1,31 +1,36 @@
 <script setup lang="ts">
-import { provide, ref, watch } from "vue";
+import { provide, reactive } from "vue";
 import { createTranslator } from "@llm-quota/i18n";
 import { useTranslator } from "./lib/i18n.js";
+import { theme } from "./lib/theme.js";
 
 const t = useTranslator();
-const locale = ref<"en" | "pt-BR">("en");
+const ui = reactive({
+  locale: (localStorage.getItem("llm-quota.locale") as "en" | "pt-BR") ?? "en",
+});
+const { ui: themeUi, toggle, init } = theme;
+
+// Apply the persisted/system theme before first paint.
+init();
 
 async function reload(next: "en" | "pt-BR") {
   const nextTranslator = await createTranslator(next);
   provide("t", nextTranslator);
 }
-void reload(locale.value);
+void reload(ui.locale);
 
 function switchLocale(next: "en" | "pt-BR") {
-  locale.value = next;
+  ui.locale = next;
   localStorage.setItem("llm-quota.locale", next);
   void reload(next);
 }
-
-watch(locale, (next) => switchLocale(next));
 </script>
 
 <template>
   <div class="shell">
-    <header>
-      <strong>llm-quota</strong>
-      <nav>
+    <header class="topbar">
+      <strong class="brand">{{ t("app.title") }}</strong>
+      <nav class="nav">
         <RouterLink to="/">
           {{ t("nav.dashboard") }}
         </RouterLink>
@@ -39,21 +44,96 @@ watch(locale, (next) => switchLocale(next));
           {{ t("nav.admin") }}
         </RouterLink>
       </nav>
-      <select
-        data-testid="locale-switch"
-        :value="locale"
-        @change="switchLocale(($event.target as HTMLSelectElement).value as 'en' | 'pt-BR')"
-      >
-        <option value="en">
-          EN
-        </option>
-        <option value="pt-BR">
-          PT-BR
-        </option>
-      </select>
+      <span class="controls">
+        <button
+          class="ghost"
+          type="button"
+          aria-label="Toggle color theme"
+          @click="toggle()"
+        >
+          {{ themeUi.theme === "dark" ? "◐ dark" : "◐ light" }}
+        </button>
+        <select
+          class="locale"
+          data-testid="locale-switch"
+          :value="ui.locale"
+          @change="switchLocale(($event.target as HTMLSelectElement).value as 'en' | 'pt-BR')"
+        >
+          <option value="en">EN</option>
+          <option value="pt-BR">PT-BR</option>
+        </select>
+      </span>
     </header>
-    <main>
+    <main class="content">
       <RouterView />
     </main>
   </div>
 </template>
+
+<style scoped>
+.shell {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--space-4);
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding-bottom: var(--space-4);
+  border-bottom: var(--border-hairline);
+  margin-bottom: var(--space-8);
+}
+.brand {
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.nav {
+  display: flex;
+  gap: var(--space-6);
+  margin-left: auto;
+}
+.nav a {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.nav a:hover {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.nav a.router-link-exact-active {
+  color: var(--accent-action);
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: var(--border-hairline);
+  box-shadow: none;
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.ghost:hover {
+  color: var(--text-primary);
+  border-color: var(--hairline-strong);
+}
+.locale {
+  width: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.content {
+  display: grid;
+  gap: var(--space-6);
+}
+</style>

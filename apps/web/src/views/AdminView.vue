@@ -2,10 +2,12 @@
 import { onMounted } from "vue";
 import { useQuotaStore } from "../stores/quota";
 import { useAuthStore } from "../stores/auth";
+import { useTranslator } from "../lib/i18n";
 
+const t = useTranslator();
 const quota = useQuotaStore();
 const auth = useAuthStore();
-void auth;
+
 onMounted(() => {
   void quota.refreshAll();
 });
@@ -13,12 +15,30 @@ onMounted(() => {
 
 <template>
   <section>
-    <h1>Administration</h1>
-    <p v-if="!auth.isAdmin">
-      Admin role required to view this page.
-    </p>
-    <p v-else>
-      Connection count: {{ quota.connections.length }} · Users/identity providers land with the admin API.
-    </p>
+    <span class="micro">{{ t("nav.admin") }}</span>
+    <h1>{{ t("nav.admin") }}</h1>
+
+    <div
+      v-if="!auth.isAdmin"
+      class="card"
+    >
+      {{ t("errors.unauthorized") }}
+    </div>
+    <div
+      v-else
+      class="card"
+    >
+      <span class="micro">{{ t("admin.users") }}</span>
+      <p>Connections: {{ quota.connections.length }}</p>
+      <p class="hint">
+        Users/identity providers land with the admin API (Phase 7).
+      </p>
+    </div>
   </section>
 </template>
+
+<style scoped>
+.hint {
+  color: var(--text-muted);
+}
+</style>

@@ -94,13 +94,21 @@ export async function runCollectPass(
     // Normalize into the domain summary (wire normalization, ADR-007).
     const summary = summarizeQuota(snapshot);
 
-    // Persist a spending aggregate (money from credits). Daily/weekly/monthly
-    // slot from the collect instant; the granularity defaults to daily when the
-    // connection's window is not a calendar window.
+    // Persist a spending aggregate (money from credits). Slots map a connection's
+    // window to a granularity: daily/weekly/monthly for those calendar windows;
+    // session/lifetime fall back to daily (the finest persisted granularity).
     if (snapshot.kind === "credits") {
+      const granularity =
+        item.conn.window === "daily"
+          ? "daily"
+          : item.conn.window === "weekly"
+            ? "weekly"
+            : item.conn.window === "monthly"
+              ? "monthly"
+              : "daily";
       const aggregate: Aggregate = {
-        granularity: item.conn.window === "daily" ? "daily" : item.conn.window === "weekly" ? "weekly" : "daily",
-        windowKey: windowKey(item.conn.window, run.at),
+        granularity,
+        windowKey: windowKey(item.conn.window === "session" || item.conn.window === "lifetime" ? "daily" : item.conn.window, run.at),
         userId: item.conn.userId,
         connectionId: item.conn.id,
         spentAmount: snapshot.used ?? snapshot.total ?? 0,

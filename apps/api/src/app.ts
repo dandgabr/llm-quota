@@ -20,9 +20,11 @@ import {
   resolvePrincipal,
   revokeSession,
   createSession,
+  withRlsContext,
   type ResolvedPrincipal,
 } from "@llm-quota/db";
 import { parseKekFromEnv, type Dek } from "@llm-quota/core";
+import type { Granularity } from "@llm-quota/core";
 import {
   hasRole,
   generatePkcePair,
@@ -30,6 +32,7 @@ import {
   generateWebAuthnChallenge,
   generateTotpSecret,
   issueSessionToken,
+  isValidSessionSecret,
 } from "@llm-quota/auth";
 
 type Variables = { principal: ResolvedPrincipal };
@@ -86,10 +89,10 @@ export function createApiApp({ db, kek, now }: ApiAppOptions) {
   app.get("/health", (c) => c.json({ ok: true, service: "llm-quota-api" }));
 
   app.get("/auth/oidc/authorize", (c) => {
-    // Returns a PKCE challenge + state for the SPA to begin an OIDC flow.
-    const { verifier, challenge } = generatePkcePair();
+    // PKCE: return only the challenge + state; NEVER the verifier.
+    const { challenge } = generatePkcePair();
     const state = generateOidcState();
-    return c.json({ code_challenge: challenge, code_verifier: verifier, state });
+    return c.json({ code_challenge: challenge, state });
   });
 
   app.get("/auth/mfa/totp/challenge", (c) => {
@@ -102,22 +105,35 @@ export function createApiApp({ db, kek, now }: ApiAppOptions) {
   });
 
   app.post("/auth/issue-session", async (c) => {
-    // Dev/self-host: mint a session token bound to a role (Phase 7 OIDC real
-    // flow replaces this; kept for local + E2E until an IdP is wired).
-    const body = await c.req.json<{ userId: string; role?: "user" | "supervisor" | "admin"; expiresInSec?: number }>().catch(() => null);
+    // Gate: no default secret. In production this must be disabled (or replaced
+    // by a real OIDC flow); in dev/test it requires a strong SESSION_SECRET.
+    if (process.env.NODE_ENV === "production") {
+      return c.json(problem(403, "Forbidden", "Disabled in production"), 403);
+    }
+    const secret = process.env.SESSION_SECRET ?? "";
+    if (!isValidSessionSecret(secret)) {
+      return c.json(problem(500, "Server Error", "SESSION_SECRET must be ≥ 32 chars"), 500);
+    }
+    const body = await c.req
+      .json<{ userId: string; role?: "user" | "supervisor" | "admin"; expiresInSec?: number }>()
+      .catch(() => null);
     if (!body?.userId) {
       return c.json(problem(400, "Bad Request", "userId required"), 400);
     }
-    const { token, hash, signature } = issueSessionToken(process.env.SESSION_SECRET ?? "dev-secret-12345678901234567890");
-    void hash;
+    const { token, hash, signature } = issueSessionToken(secret);
     void signature;
     const expiresAt = new Date(Date.now() + (body.expiresInSec ?? 3600) * 1000);
     await createSession(db.db, { userId: body.userId, tokenHash: hash, expiresAt });
     return c.json({ token, expiresAt: expiresAt.toISOString() });
   });
 
-  app.get("/v1/connections", (c) => {
-    return c.json({ data: [], has_more: false, next_cursor: null });
+  // Connections list: real repo read (P0-2).
+  app.get("/v1/connections", async (c) => {
+    const p = c.get("principal");
+    const rows = await withRlsContext(db.db, p, (tx) =>
+      connStore.listByUser(p.userId, { limit: 50, db: tx }),
+    );
+    return c.json({ data: rows, has_more: false, next_cursor: null });
   });
 
   app.post("/v1/connections", async (c) => {
@@ -131,17 +147,27 @@ export function createApiApp({ db, kek, now }: ApiAppOptions) {
       return c.json(problem(400, "Bad Request", "providerId and x-secret are required"), 400);
     }
     const p = c.get("principal");
-    const row = await connStore.create({
-      userId: p.userId,
-      providerId: body.providerId,
-      label: body.label ?? "unnamed",
-      connectionType: body.connectionType ?? "api",
-      secret,
-    });
+    const row = await withRlsContext(db.db, p, (tx) =>
+      connStore.create({
+        userId: p.userId,
+        providerId: body.providerId!,
+        label: body.label ?? "unnamed",
+        connectionType: body.connectionType ?? "api",
+        secret,
+        db: tx,
+      }),
+    );
     return c.json(row, 201);
   });
 
-  app.get("/v1/quotas", (c) => c.json({ data: [] }));
+  // Quotas list: real repo read (P0-2).
+  app.get("/v1/quotas", async (c) => {
+    const p = c.get("principal");
+    const rows = await withRlsContext(db.db, p, (tx) =>
+      connStore.listByUser(p.userId, { limit: 50, db: tx }),
+    );
+    return c.json({ data: rows, has_more: false, next_cursor: null });
+  });
 
   app.get("/v1/quotas/summary", (c) => {
     const p = c.get("principal");
@@ -151,24 +177,24 @@ export function createApiApp({ db, kek, now }: ApiAppOptions) {
     return c.json({ summary: {} });
   });
 
-  // QUERY (RFC 10008) + GET alias share one handler (ADR-008).
+  // QUERY (RFC 10008) + GET alias share one handler (ADR-008). Real read.
   const readHistory = async (c: {
-    req: { method: string; query(name: string): string | undefined; raw: { json(): Promise<unknown> } };
+    req: {
+      method: string;
+      query(name: string): string | undefined;
+      raw: { json(): Promise<unknown> };
+    };
     get(name: "principal"): ResolvedPrincipal;
     json(body: unknown, status?: number): Response;
   }) => {
     const p = c.get("principal");
-    void p;
-    if (c.req.method === "QUERY") {
-      const body = await c.req.raw.json().catch(() => ({}));
-      return c.json({ data: [], filters: body, has_more: false, next_cursor: null });
-    }
-    return c.json({
-      data: [],
-      filters: { from: c.req.query("from"), to: c.req.query("to") },
-      has_more: false,
-      next_cursor: null,
-    });
+    const from = c.req.query("from");
+    const to = c.req.query("to");
+    const granularity = (c.req.query("granularity") ?? "weekly") as Granularity;
+    const rows = await withRlsContext(db.db, p, (tx) =>
+      new PostgresHistoryStore(tx).listByUser(p.userId, granularity, from ?? "", to ?? ""),
+    );
+    return c.json({ data: rows, has_more: false, next_cursor: null });
   };
   app.get("/v1/history", readHistory);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -176,12 +202,14 @@ export function createApiApp({ db, kek, now }: ApiAppOptions) {
 
   app.get("/v1/sessions", (c) => {
     const p = c.get("principal");
-    return listSessionsByUser(db.db, p.userId).then((rows) => c.json({ data: rows }));
+    return withRlsContext(db.db, p, (tx) => listSessionsByUser(tx, p.userId)).then((rows) =>
+      c.json({ data: rows }),
+    );
   });
 
   app.delete("/v1/sessions/:id", async (c) => {
     const p = c.get("principal");
-    const n = await revokeSession(db.db, c.req.param("id"), p.userId);
+    const n = await withRlsContext(db.db, p, (tx) => revokeSession(tx, c.req.param("id"), p.userId));
     if (n === 0) return c.json(problem(404, "Not Found", "Session not found"), 404);
     return c.json({ ok: true });
   });

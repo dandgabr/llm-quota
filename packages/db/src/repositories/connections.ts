@@ -9,7 +9,7 @@
  */
 
 import { decryptSecret, encryptSecret, type Dek } from "@llm-quota/core";
-import { and, eq, type InferSelectModel } from "drizzle-orm";
+import { and, desc, eq, lt, sql, type InferSelectModel } from "drizzle-orm";
 import type { DB } from "../client.js";
 import { connections } from "../schema/quotas.js";
 
@@ -27,6 +27,8 @@ export interface CreateConnectionInput {
   connectionType: "api" | "oauth";
   /** Plaintext API key / OAuth refresh token to seal at rest. */
   secret: string;
+  /** Optional DB handle override (e.g. a transaction from withRlsContext). */
+  db?: DB;
 }
 
 /** Connection repository backed by Drizzle + Postgres. */
@@ -36,7 +38,8 @@ export class PostgresConnectionStore {
   /** Persist a new connection, sealing its secret with the KEK. */
   async create(input: CreateConnectionInput): Promise<ConnectionRow> {
     const secretCipher = encryptSecret(input.secret, this.kek);
-    const [row] = await this.db
+    const handle = input.db ?? this.db;
+    const [row] = await handle
       .insert(connections)
       .values({
         userId: input.userId,
@@ -60,6 +63,31 @@ export class PostgresConnectionStore {
     const row = rows[0];
     if (!row) return null;
     return { ...row, secret: decryptSecret(row.secretCipher, this.kek) };
+  }
+
+  /**
+   * List connections owned by a user (owner-scoped), newest first. Supports a
+   * simple cursor via `before` (an updatedAt ISO instant). `opts.db` overrides the
+   * handle used (e.g. a transaction from withRlsContext) so RLS GUCs apply.
+   */
+  async listByUser(
+    userId: string,
+    opts: { limit?: number; before?: string; db?: DB } = {},
+  ): Promise<ConnectionRow[]> {
+    const handle = opts.db ?? this.db;
+    const limit = opts.limit ?? 50;
+    const rows = await handle
+      .select()
+      .from(connections)
+      .where(
+        and(
+          eq(connections.userId, userId),
+          opts.before ? lt(connections.createdAt, new Date(opts.before)) : sql`true`,
+        ),
+      )
+      .orderBy(desc(connections.createdAt))
+      .limit(limit);
+    return rows;
   }
 
   /**

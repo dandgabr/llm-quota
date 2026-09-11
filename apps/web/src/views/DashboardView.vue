@@ -3,6 +3,7 @@ import { onMounted } from "vue";
 import { useQuotaStore } from "../stores/quota";
 import { useAuthStore } from "../stores/auth";
 import { useTranslator } from "../lib/i18n";
+import QuotaDonut from "../components/QuotaDonut.vue";
 
 const t = useTranslator();
 const quota = useQuotaStore();
@@ -20,11 +21,15 @@ const fmtCurrency = (amount?: number, currency?: string): string => {
   }).format(amount);
 };
 
-const statusTone = (pct: number): string => {
-  if (pct >= 80) return "danger";
-  if (pct >= 50) return "warn";
+const statusTone = (rem: number): string => {
+  if (rem <= 50) return "danger";
+  if (rem <= 70) return "warn";
   return "ok";
 };
+
+// "Now" is the first quota (largest share, 7 of the 7:5 split).
+const nowQuota = () => quota.quotas[0];
+const othersQuota = () => quota.quotas.slice(1);
 </script>
 
 <template>
@@ -42,11 +47,17 @@ const statusTone = (pct: number): string => {
       </div>
     </div>
 
+    <!-- Skeleton on first load -->
     <div
-      v-if="quota.loading"
-      class="card"
+      v-if="quota.loading && !quota.loaded"
+      class="grid"
+      aria-busy="true"
     >
-      {{ t("app.loading") }}
+      <div class="card skeleton skeleton-lg" />
+      <div class="skeleton-col">
+        <div class="card skeleton" />
+        <div class="card skeleton" />
+      </div>
     </div>
     <div
       v-else-if="quota.error"
@@ -64,34 +75,51 @@ const statusTone = (pct: number): string => {
     <div
       v-else
       class="grid"
+      aria-live="polite"
     >
+      <!-- "Now" hero card: 7 of 7:5 -->
       <article
-        v-for="q in quota.quotas"
-        :key="q.id"
-        class="card quota-card"
-        :class="statusTone(q.remainingPercent)"
+        v-if="nowQuota()"
+        class="card quota-card hero"
       >
-        <span class="micro">{{ quota.labelOf(q.connectionId) }}</span>
-        <strong class="tabular hero-num">
-          {{ q.kind === "percent" ? `${q.usedPercent}%` : fmtCurrency(q.usedAmount, q.currency) }}
-        </strong>
-        <div
-          class="track"
-          aria-hidden="true"
-        >
-          <div
-            class="fill"
-            :style="{ width: `${q.remainingPercent}%` }"
+        <span class="micro">{{ quota.labelOf(nowQuota()!.connectionId) }}</span>
+        <div class="hero-body">
+          <QuotaDonut
+            :percent="nowQuota()!.usedPercent"
+            :label="quota.labelOf(nowQuota()!.connectionId)"
           />
+          <div>
+            <strong class="tabular hero-num">
+              {{ nowQuota()!.kind === "percent" ? `${nowQuota()!.usedPercent}%` : fmtCurrency(nowQuota()!.usedAmount, nowQuota()!.currency) }}
+            </strong>
+            <span class="micro hero-sub">{{ t("quota.remaining") }} {{ nowQuota()!.remainingPercent }}%</span>
+          </div>
         </div>
-        <footer class="meta">
-          <span class="micro">{{ t("quota.remaining") }} {{ q.remainingPercent }}%</span>
-          <span
-            v-if="q.resetAt"
-            class="micro tabular"
-          >{{ t("quota.reset") }} {{ q.resetAt.slice(0, 10) }}</span>
-        </footer>
       </article>
+
+      <!-- Remaining quotas: tighter list -->
+      <div class="stack">
+        <article
+          v-for="q in othersQuota()"
+          :key="q.id"
+          class="card quota-card"
+          :class="statusTone(q.remainingPercent)"
+        >
+          <div class="row">
+            <span class="micro">{{ quota.labelOf(q.connectionId) }}</span>
+            <span class="micro status">{{ t("quota.used") }} {{ q.usedPercent }}%</span>
+          </div>
+          <div
+            class="track"
+            aria-hidden="true"
+          >
+            <div
+              class="fill"
+              :style="{ width: `${q.remainingPercent}%` }"
+            />
+          </div>
+        </article>
+      </div>
     </div>
   </section>
 </template>
@@ -112,26 +140,42 @@ const statusTone = (pct: number): string => {
   grid-template-columns: 7fr 5fr; /* controlled asymmetry, ADR-011 */
   gap: var(--space-6);
 }
+.stack {
+  display: grid;
+  gap: var(--space-4);
+}
 @media (max-width: 720px) {
   .grid {
     grid-template-columns: 1fr;
   }
 }
-.quota-card {
-  position: relative;
+.hero-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
 }
 .hero-num {
-  display: block;
   font-family: var(--font-display);
   font-weight: 700;
   font-size: clamp(40px, 6vw, 64px);
   line-height: 1.05;
-  margin: var(--space-2) 0 var(--space-4);
+}
+.hero-sub {
+  display: block;
+  margin-top: var(--space-2);
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--space-3);
+}
+.status {
+  color: var(--text-muted);
 }
 .track {
   height: 6px;
   background: var(--chart-fill-track);
-  border-radius: var(--radius-0);
   overflow: hidden;
 }
 .fill {
@@ -148,10 +192,23 @@ const statusTone = (pct: number): string => {
 .quota-card.danger .fill {
   background: var(--status-danger);
 }
-.meta {
-  display: flex;
-  justify-content: space-between;
+
+/* Skeleton (flat shimmer-less, pure luminance pulse) */
+.skeleton {
+  background: var(--surface-raised);
+  border: var(--border-hairline);
+  min-height: 96px;
+  animation: pulse 1.4s var(--ease-out-quart) infinite;
+}
+.skeleton-lg {
+  min-height: 180px;
+}
+.skeleton-col {
+  display: grid;
   gap: var(--space-4);
-  margin-top: var(--space-4);
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 </style>

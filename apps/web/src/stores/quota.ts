@@ -11,6 +11,8 @@ export interface QuotaState {
   connections: ConnectionView[];
   history: HistoryPoint[];
   loading: boolean;
+  /** true once the first successful load has completed (drives skeletons). */
+  loaded: boolean;
   error: string | null;
 }
 
@@ -20,6 +22,7 @@ export const useQuotaStore = defineStore("quota", {
     connections: [],
     history: [],
     loading: false,
+    loaded: false,
     error: null,
   }),
   getters: {
@@ -48,6 +51,7 @@ export const useQuotaStore = defineStore("quota", {
         this.error = err instanceof Error ? err.message : "Failed to load quotas";
       } finally {
         this.loading = false;
+        this.loaded = true;
       }
     },
   },

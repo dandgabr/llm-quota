@@ -34,6 +34,8 @@ export interface HistoryPoint {
   windowKey: string;
   spentAmount: number;
   currency: string;
+  /** Granularity window this point belongs to (daily|weekly|monthly). */
+  granularity?: "daily" | "weekly" | "monthly";
 }
 
 /** Injected HTTP + config so the client is testable offline. */

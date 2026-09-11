@@ -14,7 +14,8 @@ export const DEFAULT_PROVIDERS = [
 
 export async function seed(): Promise<number> {
   const config = resolveDatabaseConfig();
-  const db = createDb(config);
+  const handle = createDb(config);
+  const db = handle.db;
   let seeded = 0;
   for (const p of DEFAULT_PROVIDERS) {
     await db
@@ -23,6 +24,7 @@ export async function seed(): Promise<number> {
       .onConflictDoNothing({ target: [quotaProviders.providerKey, quotaProviders.connectionType] });
     seeded += 1;
   }
+  await handle.close();
   return seeded;
 }
 

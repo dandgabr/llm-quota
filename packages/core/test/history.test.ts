@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { mergeAggregates, retentionBoundary, rollupSessionBatch } from "../src/index.js";
+import {
+  mergeAggregates,
+  retentionBoundary,
+  rollupSessionBatch,
+  snapshotRetentionBoundary,
+  type SessionBatch,
+} from "../src/index.js";
 
 const now = new Date("2026-09-11T12:00:00Z");
 
@@ -34,6 +40,22 @@ describe("rollupSessionBatch", () => {
     );
     expect(aggs).toHaveLength(0);
   });
+
+  it("merges same-day records into one aggregate per slot (C1)", () => {
+    const batch: SessionBatch = {
+      userId: "u1",
+      connectionId: "c1",
+      records: [
+        { userId: "u1", connectionId: "c1", window: "daily", spentAmount: 3, currency: "USD", at: "2026-09-10T10:00:00Z" },
+        { userId: "u1", connectionId: "c1", window: "daily", spentAmount: 4, currency: "USD", at: "2026-09-10T14:00:00Z" },
+      ],
+    };
+    const aggs = rollupSessionBatch(batch, now);
+    const daily = aggs.filter((a) => a.granularity === "daily");
+    expect(daily).toHaveLength(1);
+    expect(daily[0]?.spentAmount).toBe(7);
+    expect(daily[0]?.count).toBe(2);
+  });
 });
 
 describe("mergeAggregates", () => {
@@ -51,5 +73,12 @@ describe("retentionBoundary", () => {
   it("is 12 months before now (approx 360 days)", () => {
     const boundary = new Date(retentionBoundary(now));
     expect(now.getTime() - boundary.getTime()).toBeGreaterThan(360 * 86_400_000 - 1000);
+  });
+});
+
+describe("snapshotRetentionBoundary", () => {
+  it("is 7 days before now", () => {
+    const boundary = new Date(snapshotRetentionBoundary(now));
+    expect(now.getTime() - boundary.getTime()).toBeGreaterThanOrEqual(7 * 86_400_000 - 1000);
   });
 });

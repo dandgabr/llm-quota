@@ -2,17 +2,25 @@
  * History repository: implements the core `HistoryStore` contract on Postgres,
  * persisting only aggregates (daily/weekly/monthly) with the 12-month
  * retention boundary.
+ *
+ * Money is stored as numeric(18,6), which node-postgres returns as a string;
+ * the repository converts to number on read and passes a normalized value on
+ * write. On conflict the aggregate is INCREMENTED (never overwritten) so that
+ * multiple records in the same slot accumulate correctly (ADR-004/ADR-005, C1).
  */
 
-import { and, asc, eq, lt } from "drizzle-orm";
+import { and, asc, eq, gte, lte, lt, sql } from "drizzle-orm";
 import type { Aggregate, Granularity, HistoryStore } from "@llm-quota/core";
 import type { DB } from "../client.js";
 import { spendingAggregates } from "../schema/history.js";
+
+const toNumber = (v: unknown): number => Number(v ?? 0);
 
 export class PostgresHistoryStore implements HistoryStore {
   constructor(private readonly db: DB) {}
 
   async upsertAggregate(agg: Aggregate): Promise<void> {
+    const amount = agg.spentAmount.toFixed(6); // normalize numeric as string
     await this.db
       .insert(spendingAggregates)
       .values({
@@ -20,9 +28,9 @@ export class PostgresHistoryStore implements HistoryStore {
         connectionId: agg.connectionId,
         granularity: agg.granularity,
         window: agg.windowKey,
-        spentAmount: agg.spentAmount,
+        spentAmount: amount,
         currency: agg.currency,
-        count: String(agg.count),
+        count: agg.count,
       })
       .onConflictDoUpdate({
         target: [
@@ -32,8 +40,8 @@ export class PostgresHistoryStore implements HistoryStore {
           spendingAggregates.window,
         ],
         set: {
-          spentAmount: agg.spentAmount,
-          count: String(agg.count),
+          spentAmount: sql`${spendingAggregates.spentAmount} + EXCLUDED.${spendingAggregates.spentAmount}`,
+          count: sql`${spendingAggregates.count} + EXCLUDED.${spendingAggregates.count}`,
           updatedAt: new Date(),
         },
       });
@@ -52,22 +60,21 @@ export class PostgresHistoryStore implements HistoryStore {
         and(
           eq(spendingAggregates.userId, userId),
           eq(spendingAggregates.granularity, granularity),
-          // windowKey is an ISO slot; filter by lexicographic range
+          gte(spendingAggregates.window, from),
+          lte(spendingAggregates.window, to),
         ),
       )
       .orderBy(asc(spendingAggregates.window));
 
-    return rows
-      .filter((r) => r.window >= from && r.window <= to)
-      .map((r) => ({
-        granularity: r.granularity as Granularity,
-        windowKey: r.window,
-        userId: r.userId,
-        connectionId: r.connectionId,
-        spentAmount: r.spentAmount,
-        currency: r.currency,
-        count: Number(r.count),
-      }));
+    return rows.map((r) => ({
+      granularity: r.granularity as Granularity,
+      windowKey: r.window,
+      userId: r.userId,
+      connectionId: r.connectionId,
+      spentAmount: toNumber(r.spentAmount),
+      currency: r.currency,
+      count: r.count,
+    }));
   }
 
   async evictOlderThan(before: string): Promise<number> {
@@ -75,6 +82,16 @@ export class PostgresHistoryStore implements HistoryStore {
       .delete(spendingAggregates)
       .where(lt(spendingAggregates.window, before))
       .returning({ id: spendingAggregates.id });
+    return result.length;
+  }
+
+  /** Delete raw snapshots older than a retention boundary (Phase 3 collector). */
+  async evictSnapshotsOlderThan(before: string): Promise<number> {
+    const { quotaSnapshots } = await import("../schema/quotas.js");
+    const result = await this.db
+      .delete(quotaSnapshots)
+      .where(lt(quotaSnapshots.readAt, new Date(before)))
+      .returning({ id: quotaSnapshots.id });
     return result.length;
   }
 }

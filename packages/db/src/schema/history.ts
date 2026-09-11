@@ -2,7 +2,17 @@
  * User sessions, spending aggregates and the FX rate cache.
  */
 
-import { boolean, pgTable, real, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  numeric,
+  pgTable,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
 import { granularityEnum, id, timestamps } from "./enums.js";
 import { users } from "./auth.js";
 import { connections } from "./quotas.js";
@@ -14,7 +24,7 @@ export const userSessions = pgTable("user_sessions", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   tokenHash: varchar("token_hash", { length: 128 }).notNull(),
-  expiresAt: varchar("expires_at", { length: 40 }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   revoked: boolean("revoked").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -32,15 +42,20 @@ export const spendingAggregates = pgTable(
       .references(() => connections.id, { onDelete: "cascade" }),
     granularity: granularityEnum("granularity").notNull(),
     window: varchar("window", { length: 40 }).notNull(),
-    spentAmount: real("spent_amount").notNull().default(0),
+    spentAmount: numeric("spent_amount", { precision: 18, scale: 6 }).notNull().default("0"),
     currency: varchar("currency", { length: 8 }).notNull(),
-    count: varchar("count", { length: 20 }).notNull().default("1"),
+    count: integer("count").notNull().default(1),
     ...timestamps,
   },
   (t) => ({
     aggUnique: uniqueIndex("spending_aggregates_user_slot_unique").on(
       t.userId,
       t.connectionId,
+      t.granularity,
+      t.window,
+    ),
+    aggUserWindow: index("spending_aggregates_user_window_idx").on(
+      t.userId,
       t.granularity,
       t.window,
     ),
@@ -54,7 +69,7 @@ export const fxRates = pgTable(
     id: id("id"),
     base: varchar("base", { length: 8 }).notNull().default("USD"),
     currency: varchar("currency", { length: 8 }).notNull(),
-    rate: real("rate").notNull(),
+    rate: numeric("rate", { precision: 18, scale: 8 }).notNull(),
     effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(),
   },
   (t) => ({

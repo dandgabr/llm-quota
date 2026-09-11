@@ -28,7 +28,8 @@ export class PostgresFxRateSource implements CurrencyRateSource {
         ),
       )
       .limit(1);
-    return row[0]?.rate ?? null;
+    const rate = row[0]?.rate;
+    return rate == null ? null : Number(rate);
   }
 
   /** Upsert a fetched rate for today (daily cache policy). */
@@ -38,12 +39,12 @@ export class PostgresFxRateSource implements CurrencyRateSource {
       .values({
         base: "USD",
         currency: currency.toUpperCase(),
-        rate,
+        rate: rate.toFixed(8),
         effectiveAt: startOfDay(now),
       })
       .onConflictDoUpdate({
         target: [fxRates.base, fxRates.currency, fxRates.effectiveAt],
-        set: { rate },
+        set: { rate: rate.toFixed(8) },
       });
   }
 }

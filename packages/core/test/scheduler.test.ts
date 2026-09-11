@@ -28,6 +28,16 @@ describe("stagger", () => {
     const conns = ["a", "b", "c"];
     const now = new Date("2026-09-11T10:00:00Z");
     const out = stagger(conns, now, 1000);
-    expect([...out].sort()).toEqual([...conns].sort());
+    expect(out.map((o) => o.connectionId).sort()).toEqual([...conns].sort());
+  });
+
+  it("distributes connections by spreadMs offset", () => {
+    const conns = ["a", "b", "c"];
+    const now = new Date("2026-09-11T10:00:00Z");
+    const out = stagger(conns, now, 1000);
+    const times = out.map((o) => o.at.getTime());
+    for (let i = 0; i < times.length; i++) {
+      expect(times[i]).toBe(now.getTime() + i * 1000);
+    }
   });
 });

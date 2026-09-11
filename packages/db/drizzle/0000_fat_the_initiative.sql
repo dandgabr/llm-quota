@@ -42,7 +42,7 @@ CREATE TABLE "webauthn_credentials" (
 	"user_id" uuid NOT NULL,
 	"credential_id" varchar NOT NULL,
 	"public_key" text NOT NULL,
-	"counter" varchar DEFAULT '0' NOT NULL,
+	"counter" integer DEFAULT 0 NOT NULL,
 	"transports" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -73,8 +73,8 @@ CREATE TABLE "quota_sessions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"connection_id" uuid NOT NULL,
 	"window" "quota_window" NOT NULL,
-	"used_percent" real,
-	"remaining_percent" real,
+	"used_percent" numeric(6, 3),
+	"remaining_percent" numeric(6, 3),
 	"resets_at" timestamp with time zone,
 	"started_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -87,8 +87,8 @@ CREATE TABLE "quota_snapshots" (
 	"window" "quota_window" NOT NULL,
 	"currency" varchar(8),
 	"credits" jsonb,
-	"used_percent" real,
-	"remaining_percent" real,
+	"used_percent" numeric(6, 3),
+	"remaining_percent" numeric(6, 3),
 	"resets_at" timestamp with time zone,
 	"read_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -97,7 +97,7 @@ CREATE TABLE "fx_rates" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"base" varchar(8) DEFAULT 'USD' NOT NULL,
 	"currency" varchar(8) NOT NULL,
-	"rate" real NOT NULL,
+	"rate" numeric(18, 8) NOT NULL,
 	"effective_at" timestamp with time zone NOT NULL
 );
 --> statement-breakpoint
@@ -107,9 +107,9 @@ CREATE TABLE "spending_aggregates" (
 	"connection_id" uuid NOT NULL,
 	"granularity" "granularity" NOT NULL,
 	"window" varchar(40) NOT NULL,
-	"spent_amount" real DEFAULT 0 NOT NULL,
+	"spent_amount" numeric(18, 6) DEFAULT '0' NOT NULL,
 	"currency" varchar(8) NOT NULL,
-	"count" varchar(20) DEFAULT '1' NOT NULL,
+	"count" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -118,7 +118,7 @@ CREATE TABLE "user_sessions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"token_hash" varchar(128) NOT NULL,
-	"expires_at" varchar(40) NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
 	"revoked" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -137,5 +137,7 @@ CREATE UNIQUE INDEX "users_email_unique" ON "users" USING btree ("email");--> st
 CREATE UNIQUE INDEX "connections_user_provider_unique" ON "connections" USING btree ("user_id","provider_id","label");--> statement-breakpoint
 CREATE UNIQUE INDEX "quota_providers_provider_key_type_unique" ON "quota_providers" USING btree ("provider_key","connection_type");--> statement-breakpoint
 CREATE UNIQUE INDEX "quota_snapshots_conn_window_read_unique" ON "quota_snapshots" USING btree ("connection_id","window","read_at");--> statement-breakpoint
+CREATE INDEX "quota_snapshots_conn_read_idx" ON "quota_snapshots" USING btree ("connection_id","read_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "fx_rates_base_currency_day_unique" ON "fx_rates" USING btree ("base","currency","effective_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "spending_aggregates_user_slot_unique" ON "spending_aggregates" USING btree ("user_id","connection_id","granularity","window");
+CREATE UNIQUE INDEX "spending_aggregates_user_slot_unique" ON "spending_aggregates" USING btree ("user_id","connection_id","granularity","window");--> statement-breakpoint
+CREATE INDEX "spending_aggregates_user_window_idx" ON "spending_aggregates" USING btree ("user_id","granularity","window");

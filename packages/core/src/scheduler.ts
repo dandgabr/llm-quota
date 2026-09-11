@@ -62,13 +62,33 @@ export function scheduleNext(input: ScheduleInput): NextRun {
   return { due, at: next };
 }
 
-/** Stagger connections so simultaneous collection spreads across a window. */
-export function stagger(connections: string[], now: Date, spreadMs: number): string[] {
+/** A staggered collection slot for a connection. */
+export interface StaggeredRun {
+  connectionId: string;
+  at: Date;
+}
+
+/**
+ * Stagger connections so simultaneous collection spreads across a window.
+ * Rotates the order deterministically by day (avoid thundering herd) and
+ * distributes each connection at `i * spreadMs` after `now`.
+ */
+export function stagger(
+  connections: string[],
+  now: Date,
+  spreadMs: number,
+): StaggeredRun[] {
   if (connections.length === 0) return [];
-  if (spreadMs <= 0) return [...connections];
-  // Deterministic rotation by day of year, so the order shifts daily and
-  // avoids a thundering herd.
+  if (spreadMs <= 0) {
+    return connections.map((c) => ({ connectionId: c, at: now }));
+  }
+  // Deterministic rotation by day of year so the order shifts daily.
   const dayOfYear = Math.floor((now.getTime() - Date.UTC(now.getUTCFullYear(), 0, 0)) / 86_400_000);
   const offset = dayOfYear % connections.length;
-  return [...connections.slice(offset), ...connections.slice(0, offset)];
+  const rotated = [...connections.slice(offset), ...connections.slice(0, offset)];
+  const startMs = now.getTime();
+  return rotated.map((connectionId, i) => ({
+    connectionId,
+    at: new Date(startMs + i * spreadMs),
+  }));
 }

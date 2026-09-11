@@ -15,6 +15,9 @@ import { safeAmount } from "./math.js";
 
 export const HISTORY_RETENTION_MONTHS = 12;
 
+/** How long raw quota snapshots (diagnostics) are kept before eviction. */
+export const SNAPSHOT_RETENTION_DAYS = 7;
+
 /** A single normalized spending entry produced by a quota read. */
 export interface SpendingRecord {
   userId: string;
@@ -95,33 +98,37 @@ function isRetained(_window: QuotaWindow): boolean {
 }
 
 /**
- * Roll a `SessionBatch` into daily/weekly/monthly aggregates for each record,
- * applying the 12-month retention filter per record. Returns the aggregates to
- * persist via `HistoryStore`.
+ * Roll a `SessionBatch` into a single aggregate per (user, connection,
+ * granularity, slot), summing the spent amounts and record counts. Applies the
+ * 12-month retention filter per record. The map guarantees one row per slot, so
+ * the store's upsert can safely merge with increment (C1).
  */
 export function rollupSessionBatch(batch: SessionBatch, now: Date): Aggregate[] {
-  const out: Aggregate[] = [];
+  const retentionBoundary = new Date(now.getTime() - HISTORY_RETENTION_MONTHS * 30 * DAY_MS);
+  const bySlot = new Map<string, Aggregate>();
+
   for (const record of batch.records) {
-    const retentionBoundary = new Date(
-      now.getTime() - HISTORY_RETENTION_MONTHS * 30 * DAY_MS,
-    );
     if (new Date(record.at) < retentionBoundary) continue; // outside 12-month window
     if (!isRetained(record.window)) continue;
 
     const granularities: Granularity[] = ["daily", "weekly", "monthly"];
     for (const g of granularities) {
-      out.push({
+      const windowKey = `${g}:${granularitySlot(g, new Date(record.at))}`;
+      const key = `${batch.userId}|${batch.connectionId}|${g}|${windowKey}`;
+      const existing = bySlot.get(key);
+      const recordAgg: Aggregate = {
         granularity: g,
-        windowKey: `${g}:${granularitySlot(g, new Date(record.at))}`,
+        windowKey,
         userId: batch.userId,
         connectionId: batch.connectionId,
         spentAmount: record.spentAmount,
         currency: record.currency,
         count: 1,
-      });
+      };
+      bySlot.set(key, existing ? mergeAggregates(existing, recordAgg) : recordAgg);
     }
   }
-  return out;
+  return [...bySlot.values()];
 }
 
 /** Merge two aggregates of the same slot into one (used by upsert merge). */
@@ -138,6 +145,13 @@ export function mergeAggregates(a: Aggregate, b: Aggregate): Aggregate {
  */
 export function retentionBoundary(now: Date): string {
   return new Date(now.getTime() - HISTORY_RETENTION_MONTHS * 30 * DAY_MS).toISOString();
+}
+
+/**
+ * Build the raw-snapshot retention boundary (ISO) for diagnostics (TTL).
+ */
+export function snapshotRetentionBoundary(now: Date): string {
+  return new Date(now.getTime() - SNAPSHOT_RETENTION_DAYS * DAY_MS).toISOString();
 }
 
 export { sumCredits, toCreditTotals, windowKey };

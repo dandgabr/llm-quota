@@ -4,9 +4,10 @@
 
 import {
   boolean,
+  index,
   jsonb,
+  numeric,
   pgTable,
-  real,
   text,
   timestamp,
   uniqueIndex,
@@ -73,8 +74,8 @@ export const quotaSessions = pgTable("quota_sessions", {
     .notNull()
     .references(() => connections.id, { onDelete: "cascade" }),
   window: quotaWindowEnum("window").notNull(),
-  usedPercent: real("used_percent"),
-  remainingPercent: real("remaining_percent"),
+  usedPercent: numeric("used_percent", { precision: 6, scale: 3 }),
+  remainingPercent: numeric("remaining_percent", { precision: 6, scale: 3 }),
   /** Provider-defined resets-at instant. */
   resetsAt: timestamp("resets_at", { withTimezone: true }),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
@@ -101,8 +102,8 @@ export const quotaSnapshots = pgTable(
       total?: number;
     }>(),
     /** Percent usage (kind=percent). */
-    usedPercent: real("used_percent"),
-    remainingPercent: real("remaining_percent"),
+    usedPercent: numeric("used_percent", { precision: 6, scale: 3 }),
+    remainingPercent: numeric("remaining_percent", { precision: 6, scale: 3 }),
     resetsAt: timestamp("resets_at", { withTimezone: true }),
     /** ISO of the read. */
     readAt: timestamp("read_at", { withTimezone: true }).notNull().defaultNow(),
@@ -113,5 +114,6 @@ export const quotaSnapshots = pgTable(
       t.window,
       t.readAt,
     ),
+    snapshotReadIndex: index("quota_snapshots_conn_read_idx").on(t.connectionId, t.readAt),
   }),
 );

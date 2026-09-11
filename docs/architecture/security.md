@@ -40,13 +40,16 @@ mitigation), not just by route.
 
 ## Row-Level Security (tenant isolation)
 
-Applied in Phase 2 (see `packages/db/drizzle/custom/0001_rls.sql`). Tenant tables
-(users, connections, quota_sessions, quota_snapshots, spending_aggregates,
-user_sessions) are RLS-enabled and restricted to the owning `user_id`. The app
-role (`llmquota_app`) connects the pool; each request sets `app.user_id`,
-`app.is_admin` and `app.is_supervisor_admin` session settings so RLS policies can
-scope reads/writes per tenant and preserve the supervisor/admin read paths.
-Reference/shared data (quota_providers, identity_providers, fx_rates) is not
+Applied in Phase 2/3 via versioned migrations (`packages/db/drizzle/0001_*.sql`
+with `GRANT`/`ALTER DEFAULT PRIVILEGES` and `FORCE ROW LEVEL SECURITY`). Tenant
+tables (users, connections, quota_sessions, quota_snapshots, spending_aggregates,
+user_sessions, totp_secrets, webauthn_credentials) are RLS-enabled, FORCE-locked
+and restricted to the owning `user_id`. The app role (`llmquota_app`) connects
+the pool; the auth middleware (Phase 4/5) sets `app.user_id`,
+`app.is_admin` and `app.is_supervisor_admin` via `SET LOCAL` inside each managed
+transaction, so policies scope reads/writes per tenant and preserve the
+supervisor/admin read paths. Reference/shared data (quota_providers,
+identity_providers, fx_rates) is not
 tenant-scoped by design.
 
 ## Testing/verification

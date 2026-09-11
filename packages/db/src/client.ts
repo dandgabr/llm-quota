@@ -15,13 +15,26 @@ export interface DbOptions {
   maxConnections?: number;
 }
 
+/** A managed DB handle: the Drizzle database plus lifecycle control. */
+export interface DbHandle {
+  db: DB;
+  pool: pg.Pool;
+  /** Release all pooled connections (call on app shutdown / test teardown). */
+  close(): Promise<void>;
+}
+
 /** Create a Drizzle DB from a pool. Caller owns pool lifecycle. */
-export function createDb(options: DbOptions): DB {
+export function createDb(options: DbOptions): DbHandle {
   const pool = new pg.Pool({
     connectionString: options.url,
     max: options.maxConnections ?? 10,
   });
-  return drizzle(pool, { schema });
+  const db = drizzle(pool, { schema });
+  return {
+    db,
+    pool,
+    close: () => pool.end(),
+  };
 }
 
 export function resolveDatabaseConfig(env: NodeJS.ProcessEnv = process.env) {

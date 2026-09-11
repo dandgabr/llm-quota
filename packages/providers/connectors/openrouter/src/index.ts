@@ -9,10 +9,12 @@ export const openRouterConnector: ProviderConnector = {
   id: "openrouter/api",
   name: "OpenRouter",
   connectionType: "api",
+  /** Reads the OpenRouter quota for a connection (Phase 3 implementation). */
   async fetchQuota(_context: ProviderContext) {
     // Phase 3: implement real quota read.
     throw new Error("Not implemented in Phase 0");
   },
+  /** Best-effort label autodetection (Phase 3 implementation). */
   async discoverLabel(_context: ProviderContext) {
     return null;
   },

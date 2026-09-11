@@ -35,6 +35,7 @@ export interface UsageCredits {
   resetsAt?: string;
 }
 
+/** A normalized provider quota record: either percentage or monetary credits. */
 export type Quota = UsagePercent | UsageCredits;
 
 /** A connection type for a provider (e.g. OAuth vs API). */
@@ -53,6 +54,5 @@ export interface Connection {
   /** ISO created timestamp. */
   createdAt: string;
 }
-
 /** Roles for the RBAC model (requirement 9). */
 export type Role = "user" | "supervisor" | "admin";

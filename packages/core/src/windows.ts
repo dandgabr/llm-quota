@@ -14,7 +14,7 @@ import type { QuotaWindow } from "@llm-quota/shared";
  */
 export const WINDOW_ORDER: QuotaWindow[] = ["session", "daily", "weekly", "monthly", "lifetime"];
 
-/** Returns the window for an anchored instant, or null when unknown. */
+/** Resolves a window name to a QuotaWindow, or null when unknown. */
 export function resolveWindow(name: string): QuotaWindow | null {
   return (WINDOW_ORDER as string[]).includes(name) ? (name as QuotaWindow) : null;
 }

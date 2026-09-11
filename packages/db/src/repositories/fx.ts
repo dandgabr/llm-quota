@@ -10,9 +10,13 @@ import { fxRates } from "../schema/history.js";
 
 const DAY_MS = 86_400_000;
 
+/**
+ * Postgres-backed CurrencyRateSource, reading the daily-cached `fx_rates`.
+ */
 export class PostgresFxRateSource implements CurrencyRateSource {
   constructor(private readonly db: DB) {}
 
+  /** Latest cached USD->`to` rate for today, or null when unavailable. */
   async rateUsdTo(to: string): Promise<number | null> {
     const dayStart = startOfDay(new Date());
     const dayEnd = new Date(dayStart.getTime() + DAY_MS);

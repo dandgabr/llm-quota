@@ -18,12 +18,16 @@ export interface CurrencyRateSource {
 }
 
 export interface ConvertInput {
+  /** Amount to convert. */
   amount: number;
+  /** Source currency code. */
   from: CurrencyCode;
+  /** Target currency code. */
   to: CurrencyCode;
 }
 
 export interface ConvertResult {
+  /** Converted amount in the target currency. */
   amount: number;
   from: CurrencyCode;
   to: CurrencyCode;
@@ -57,6 +61,7 @@ export async function convertCurrency(
   return { amount: converted, from: input.from, to: input.to, rate };
 }
 
+/** Uppercase-normalises a currency code for comparison. */
 function fromCodeToUpper(code: string): string {
   return code.toUpperCase();
 }

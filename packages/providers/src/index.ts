@@ -31,14 +31,17 @@ export interface ProviderConnector {
 export class ProviderRegistry {
   private readonly connectors = new Map<string, ProviderConnector>();
 
+  /** Register a connector under its stable id. */
   register(connector: ProviderConnector): void {
     this.connectors.set(connector.id, connector);
   }
 
+  /** Look up a connector by id, or undefined when not registered. */
   get(id: string): ProviderConnector | undefined {
     return this.connectors.get(id);
   }
 
+  /** Return all registered connectors. */
   list(): ProviderConnector[] {
     return [...this.connectors.values()];
   }

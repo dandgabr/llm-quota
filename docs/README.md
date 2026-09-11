@@ -11,6 +11,7 @@ reference + how-to + architecture.
 | [Architecture overview](architecture/overview.md) | System architecture, monolith modules, client/server, connector pattern |
 | [Implementation plan](architecture/implementation-plan.md) | Phased roadmap (F0–F7) and current status |
 | [ADR index](adr/README.md) | Architecture decision records |
+| [Code doc conventions](architecture/code-documentation-conventions.md) | TSDoc / doc-comment standard for source code |
 | [Docker / deploy](deploy.md) | Deployment topology, compose, TLS, backup, PITR |
 
 ## Conventions

@@ -79,6 +79,9 @@ See [ADR-001](adr/ADR-001-modular-monolith-connectors-crypto-oidc.md) and
 - **Testing**: unit (Vitest) per package, integration + E2E (Playwright) at the
   app level, plus connector contract tests. See
   [docs/architecture/testing.md](testing.md).
+- **Code documentation**: TSDoc for every public surface, English, with module
+  headers. See [docs/architecture/code-documentation-conventions.md](code-documentation-conventions.md)
+  and [ADR-006](adr/ADR-006-code-documentation-standard.md).
 
 ## Deploy (v1)
 

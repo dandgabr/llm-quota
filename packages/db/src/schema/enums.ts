@@ -29,8 +29,10 @@ export const granularityEnum = pgEnum("granularity", ["daily", "weekly", "monthl
 /** Quota expression kind: relative percentage or monetary credits. */
 export const quotaKindEnum = pgEnum("quota_kind", ["percent", "credits"]);
 
+/** PK column helper: a random default UUID. */
 export const id = (name: string) => uuid(name).notNull().primaryKey().defaultRandom();
 
+/** Standard created_at/updated_at columns used by most tables. */
 export const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -11,7 +11,9 @@ export type DB = NodePgDatabase<typeof schema>;
 export { schema };
 
 export interface DbOptions {
+  /** PostgreSQL connection string. */
   url: string;
+  /** Max pooled connections (default 10). */
   maxConnections?: number;
 }
 
@@ -37,6 +39,7 @@ export function createDb(options: DbOptions): DbHandle {
   };
 }
 
+/** Resolve DB config from env; throws when DATABASE_URL is missing. */
 export function resolveDatabaseConfig(env: NodeJS.ProcessEnv = process.env) {
   const url = env.DATABASE_URL ?? "";
   if (!url) {

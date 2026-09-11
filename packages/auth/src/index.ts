@@ -9,6 +9,10 @@ export type Role = "user" | "supervisor" | "admin";
 /** Server-side RBAC decision for an actor on a resource owner. */
 export type Access = "allow" | "deny";
 
+/**
+ * Whether `actor` can VIEW the resource owned by `ownerId`. Owners always pass;
+ * supervisors and admins may view another user's spend/quota (read-only).
+ */
 export function canViewActor(actorRole: Role, actorId: string, ownerId: string): Access {
   // Everyone can view their own data.
   if (actorId === ownerId) return "allow";
@@ -17,6 +21,10 @@ export function canViewActor(actorRole: Role, actorId: string, ownerId: string):
   return "deny";
 }
 
+/**
+ * Whether `actor` can MANAGE (mutate) the connections owned by `ownerId`.
+ * Only the owner, or an admin, may mutate a connection.
+ */
 export function canManageConnections(actorRole: Role, actorId: string, ownerId: string): Access {
   // Only the owner (or an admin) can mutate a connection.
   if (actorId === ownerId) return "allow";

@@ -14,6 +14,7 @@ and set the old one's status to `superseded by [[decisions/<new>]]`.
 | [ADR-003](ADR-003-confirmed-scope.md) | Confirmed scope choices (UI, FX, connectors, session semantics, deploy, RBAC) | accepted |
 | [ADR-004](ADR-004-persistence-drizzle-ormsql-rls.md) | Persistence layer — Drizzle ORM, SQL migrations, tenant RLS | accepted |
 | [ADR-005](ADR-005-rls-snapshots-envelope-crypto.md) | RLS enforcement model, snapshot retention, envelope crypto | accepted |
+| [ADR-006](ADR-006-code-documentation-standard.md) | Code documentation standard — TSDoc and English | accepted |
 
 ## Status legend
 

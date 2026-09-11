@@ -17,6 +17,7 @@ export interface CreditTotals {
   currency: string;
 }
 
+/** Normalise partial credit input into a CreditTotals with clamped safe amounts. */
 export function toCreditTotals(input: {
   used?: number;
   limit?: number;
@@ -32,7 +33,9 @@ export function toCreditTotals(input: {
 }
 
 export interface CreditSummary {
+  /** Percentage of the limit used (0 when limit is absent/unlimited). */
   usedPercent: number;
+  /** Percentage of the limit remaining. */
   remainingPercent: number;
   usedAmount: number;
   remainingAmount: number;

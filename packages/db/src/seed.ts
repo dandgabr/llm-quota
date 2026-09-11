@@ -6,12 +6,16 @@
 import { createDb, resolveDatabaseConfig } from "../src/index.js";
 import { quotaProviders } from "../src/schema/quotas.js";
 
-/** The v1 connectors registered in the provider registry. */
+/** Provider definitions registered by the seed (v1 connectors). */
 export const DEFAULT_PROVIDERS = [
   { providerKey: "ollama-claude/api", name: "Ollama Claude", connectorId: "ollama-claude/api", connectionType: "api" as const },
   { providerKey: "openrouter/api", name: "OpenRouter", connectorId: "openrouter/api", connectionType: "api" as const },
 ];
 
+/**
+ * Seed default quota providers into a fresh database. Idempotent: rows already
+ * present for a provider key + type are left untouched. Returns rows seeded.
+ */
 export async function seed(): Promise<number> {
   const config = resolveDatabaseConfig();
   const handle = createDb(config);

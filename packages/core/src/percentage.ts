@@ -18,9 +18,13 @@ export function percentRemaining(used: number, total: number): number {
 
 export interface QuotaSummary {
   kind: Quota["kind"];
+  /** Percentage of the quota used (0..100). */
   usedPercent: number;
+  /** Percentage of the quota remaining (0..100). */
   remainingPercent: number;
+  /** Monetary amount used (credit quotas only). */
   usedAmount?: number;
+  /** Monetary amount remaining (credit quotas only). */
   remainingAmount?: number;
 }
 

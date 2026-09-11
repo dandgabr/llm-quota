@@ -17,12 +17,16 @@ export const COLLECTION_INTERVALS: Record<QuotaWindow, number> = {
 };
 
 export interface ScheduleInput {
+  /** ISO instant of the last collection (absent => first run, due). */
   lastCollectedAt?: string;
+  /** The quota window to schedule for. */
   window: QuotaWindow;
+  /** The anchor instant used for interval/reset decisions. */
   now: Date;
 }
 
 export interface NextRun {
+  /** Whether a collection should run now. */
   due: boolean;
   /** Suggested next collection instant (ISO). */
   at?: string;

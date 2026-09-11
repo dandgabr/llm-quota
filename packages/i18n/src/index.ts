@@ -13,9 +13,11 @@ import i18next, { type i18n } from "i18next";
 import en from "../locales/en.json" with { type: "json" };
 import ptBR from "../locales/pt-BR.json" with { type: "json" };
 
+/** Locale codes the product ships. */
 export const SUPPORTED_LOCALES = ["en", "pt-BR"] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
+/** Default locale when none is supplied. */
 export const DEFAULT_LOCALE: SupportedLocale = "en";
 
 const resources = {
@@ -32,8 +34,10 @@ export function localeChain(locale: string): string[] {
 
 let instance: i18n | null = null;
 
+/** Translator function resolving a namespaced key to the target locale string. */
 export type Translator = (key: string, options?: Record<string, unknown>) => string;
 
+/** Create (or reuse) a translator bound to the given locale. */
 export async function createTranslator(
   locale: string = DEFAULT_LOCALE,
 ): Promise<Translator> {

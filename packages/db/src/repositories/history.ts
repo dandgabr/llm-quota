@@ -16,9 +16,14 @@ import { spendingAggregates } from "../schema/history.js";
 
 const toNumber = (v: unknown): number => Number(v ?? 0);
 
+/**
+ * Postgres-backed HistoryStore. Increments aggregates on conflict so multiple
+ * records in the same slot accumulate; converts numeric money to JS numbers.
+ */
 export class PostgresHistoryStore implements HistoryStore {
   constructor(private readonly db: DB) {}
 
+  /** Upsert an aggregate, incrementing spentAmount/count on conflict. */
   async upsertAggregate(agg: Aggregate): Promise<void> {
     const amount = agg.spentAmount.toFixed(6); // normalize numeric as string
     await this.db
@@ -47,6 +52,7 @@ export class PostgresHistoryStore implements HistoryStore {
       });
   }
 
+  /** List aggregates for a user within a granularity and ISO window range. */
   async listByUser(
     userId: string,
     granularity: Granularity,
@@ -77,6 +83,7 @@ export class PostgresHistoryStore implements HistoryStore {
     }));
   }
 
+  /** Delete aggregates with an ISO window before `before`; returns rows removed. */
   async evictOlderThan(before: string): Promise<number> {
     const result = await this.db
       .delete(spendingAggregates)

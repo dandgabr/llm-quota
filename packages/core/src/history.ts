@@ -39,11 +39,15 @@ export type Granularity = "daily" | "weekly" | "monthly";
 
 export interface Aggregate {
   granularity: Granularity;
+  /** ISO slot key this aggregate covers. */
   windowKey: string;
   userId: string;
   connectionId: string;
+  /** Summed spent amount for the slot, in record currency. */
   spentAmount: number;
+  /** Currency of `spentAmount`. */
   currency: string;
+  /** Number of records rolled into the aggregate. */
   count: number;
 }
 

@@ -13,3 +13,4 @@ export * from "./windows.js";
 export * from "./fx.js";
 export * from "./history.js";
 export * from "./scheduler.js";
+export * from "./crypto.js";

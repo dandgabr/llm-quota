@@ -74,10 +74,20 @@ Acceptance met: contract tests pass (fake provider stub via `HttpClient`);
 registry routes by `providerId + connectionType`; both connectors return a quota
 snapshot in the standard shape and normalize through `core.summarizeQuota`.
 
-## Phase 4 — Security Layer
+## Phase 4 — Security Layer ✅
 
-Envelope encryption (DEK/KEK, AES-256-GCM), OAuth token storage, `auth` OIDC
-abstraction, TOTP + WebAuthn, RBAC enforcement. ASVS L2 review.
+- [x] Envelope encryption (`packages/core/src/crypto.ts`): AES-256-GCM, per-value
+      DEK wrapped by KEK (`LLM_QUOTA_KEK`), versioned payload `v1.…`; fills the
+      `*_cipher` columns. ADR-005 Q5.
+- [x] Auth primitives (`packages/auth`): RFC 6238 TOTP + `otpauth://` builder,
+      WebAuthn assertion verify (ECDSA/P-256), OIDC auth-code + PKCE + state,
+      opaque session tokens (SHA-256 at rest), RBAC enforcement.
+- [x] `PostgresConnectionStore` seals `connections.secret_cipher` at rest.
+- [x] Security review (ASVS L2) completed; HIGH/MED defects fixed (WebAuthn
+      clientData base64url, OIDC PKCE/state in auth URL, session signature).
+
+Acceptance met: keys never plaintext at rest; TOTP/WebAuthn flows tested; OIDC
+PKCE + state validated; secrets never logged; secret-leakage tests green.
 
 ## Phase 5 — Backend API & Collection/Scheduling
 

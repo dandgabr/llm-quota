@@ -1,0 +1,128 @@
+import { describe, expect, it } from "vitest";
+import { webcrypto } from "node:crypto";
+import {
+  exportPublicKeySpki,
+  generateWebAuthnChallenge,
+  hashClientDataJson,
+  parseClientData,
+  verifyWebAuthnAssertion,
+  type WebAuthnAssertion,
+  type WebAuthnCredential,
+} from "../src/webauthn.js";
+
+type CryptoKey = webcrypto.CryptoKey;
+type BufferSource = webcrypto.BufferSource;
+
+/** Build a signed assertion for a credential using the Web Crypto API (ES256). */
+async function buildAssertion(
+  privateKey: CryptoKey,
+  credentialId: string,
+  origin: string,
+  challenge: string,
+): Promise<WebAuthnAssertion> {
+  const clientData = {
+    type: "webauthn.get",
+    challenge,
+    origin,
+  };
+  const clientDataJson = Buffer.from(JSON.stringify(clientData)).toString("base64url");
+  const clientDataHash = hashClientDataJson(clientDataJson);
+  // RFC 8188-style authenticator data: 32-byte rpIdHash + flags + counter.
+  const rpIdHash = new Uint8Array(32).fill(7);
+  const flags = new Uint8Array(1).fill(1); // user-present
+  const counter = Buffer.from([0, 0, 0, 1]); // 4 bytes
+  const authenticatorData = Buffer.concat([
+    Buffer.from(rpIdHash),
+    Buffer.from(flags),
+    counter,
+  ]);
+  const data = Buffer.concat([authenticatorData, clientDataHash]);
+  const signature = await webcrypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    privateKey,
+    data as unknown as BufferSource,
+  );
+  return {
+    credentialId,
+    clientDataJson,
+    signature: Buffer.from(signature).toString("base64url"),
+    authenticatorData: authenticatorData.toString("base64url"),
+  };
+}
+
+describe("WebAuthn", () => {
+  it("generates a base64url challenge", () => {
+    const c = generateWebAuthnChallenge();
+    expect(c).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("hashes client data (SHA-256)", () => {
+    const h = hashClientDataJson("{}");
+    expect(h.length).toBe(32);
+  });
+
+  it("parses client data", () => {
+    const json = Buffer.from('{"type":"webauthn.get","challenge":"c","origin":"https://x"}').toString("base64url");
+    const d = parseClientData(json);
+    expect(d.type).toBe("webauthn.get");
+    expect(d.challenge).toBe("c");
+    expect(d.origin).toBe("https://x");
+  });
+
+  it("verifies a valid assertion with the stored public key", async () => {
+    const pair = await webcrypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign", "verify"],
+    );
+    const challenge = generateWebAuthnChallenge();
+    const credentialId = "cred-1";
+    const assertion = await buildAssertion(pair.privateKey as CryptoKey, credentialId, "https://app", challenge);
+    const publicKey = await exportPublicKeySpki(pair.publicKey as CryptoKey);
+    const credential: WebAuthnCredential = {
+      credentialId,
+      publicKey,
+      algorithm: -7,
+      counter: 1,
+    };
+    expect((await verifyWebAuthnAssertion(credential, assertion)).verified).toBe(true);
+  });
+
+  it("rejects an assertion with the wrong type", async () => {
+    const pair = await webcrypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign", "verify"],
+    );
+    const assertion = await buildAssertion(pair.privateKey as CryptoKey, "c", "https://app", "ch");
+    const credential: WebAuthnCredential = {
+      credentialId: "c",
+      publicKey: await exportPublicKeySpki(pair.publicKey as CryptoKey),
+      algorithm: -7,
+      counter: 1,
+    };
+    // Override client-data type to something unexpected.
+    const bad = {
+      ...assertion,
+      clientDataJson: Buffer.from(
+        JSON.stringify({ type: "webauthn.create", challenge: "ch", origin: "https://app" }),
+      ).toString("base64url"),
+    };
+    expect((await verifyWebAuthnAssertion(credential, bad)).verified).toBe(false);
+  });
+
+  it("rejects an assertion signed with the wrong key", async () => {
+    const [a, b] = await Promise.all([
+      webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]),
+      webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]),
+    ]);
+    const assertion = await buildAssertion(a.privateKey as CryptoKey, "c", "https://app", "ch");
+    const credential: WebAuthnCredential = {
+      credentialId: "c",
+      publicKey: await exportPublicKeySpki(b.publicKey as CryptoKey),
+      algorithm: -7,
+      counter: 1,
+    };
+    expect((await verifyWebAuthnAssertion(credential, assertion)).verified).toBe(false);
+  });
+});

@@ -25,24 +25,38 @@ Status: design — implementation lands in [Phase 4](architecture/implementation
 
 All secrets — API keys and OAuth refresh tokens — are encrypted at rest:
 
-- A fresh random **DEK** (data encryption key) is generated per secret value.
+- A fresh random **DEK** (data encryption key, 32 bytes) is generated per secret value.
 - The payload is encrypted with **AES-256-GCM** (authenticated).
 - The DEK is wrapped by a **KEK** (key-encryption key) taken from environment or
   a KMS; the KEK is **never** stored in the database.
-- The DB stores only ciphertext + the wrapped DEK + metadata.
+- The DB stores only the versioned ciphertext payload.
+
+**Concrete format (v1, `node:crypto` AEAD per ADR-005 Q5, implemented in
+`packages/core/src/crypto.ts`):**
+`v1.<secretNonce>.<secretAuthTag>.<secretCiphertext>.<wrapNonce>.<wrappedDek>`
+(all base64). `encryptSecret(value, KEK)` / `decryptSecret(payload, KEK)` handle
+the full round-trip; secrets and keys are **never logged**. The KEK is read from
+`LLM_QUOTA_KEK` (base64, 32 bytes) via `parseKekFromEnv`.
 
 OAuth **access** tokens are kept in memory/encrypted cache; only **refresh**
-tokens persist (encrypted) in the DB.
+tokens persist (encrypted) in the DB. The `connections.secret_cipher` column is
+sealed via envelope encryption by `PostgresConnectionStore` (Phase 4).
 
 ## Authentication & MFA
 
 - **OIDC-standard** identity abstraction (local + future Google/GitHub/Discord/SSO).
 - **TOTP** and **WebAuthn** (passkeys / security keys) as second factors;
   WebAuthn credentials are managed by the user's authenticator/password manager
-  (e.g. Bitwarden).
+  (e.g. Bitwarden). Implemented in `packages/auth` (Phase 4): RFC 6238 TOTP with
+  `otpauth://` URI builder, WebAuthn assertion verification (ECDSA/P-256 COSE -7)
+  with counter read-out, OIDC auth-code + PKCE (S256) + `state` + pinned
+  `redirect_uri`, opaque session tokens with SHA-256 at rest.
 - Sessions use **HttpOnly / SameSite** secure cookies or equivalent secure
   token transport. `SESSION_SECRET` signs the server session.
 - OIDC flows validate `state`, use **PKCE**, and pin the `redirect_uri`.
+
+> **MFA/WebAuthn note:** Phase 4 implements the crypto primitives; full
+> enrollment/attestation UI and step-up challenge flows are wired in Phase 6.
 
 ## RBAC & object-level security
 
@@ -55,7 +69,8 @@ Profiles: `user`, `supervisor`, `admin`.
 - `user` — connects providers and views own quotas/history.
 
 Access control is enforced server-side at the object level (OWASP BOLA / IDOR
-mitigation), not just by route.
+mitigation), not just by route. RBAC helpers live in `packages/auth/src/rbac.ts`
+(`canViewActor`, `canManageConnections`, `hasRole`).
 
 ## Row-Level Security (tenant isolation)
 

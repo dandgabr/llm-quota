@@ -7,5 +7,6 @@
 export * from "./client.js";
 export * from "./schema/index.js";
 export * from "./repositories/history.js";
+export * from "./repositories/connections.js";
 export * from "./repositories/fx.js";
 export * from "./seed.js";

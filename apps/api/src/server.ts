@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 import { createServer as createHttpsServer, type ServerOptions as HttpsServerOptions } from "node:https";
 import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
+import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import { createDb, resolveDatabaseConfig, type DbHandle } from "@llm-quota/db";
 import { parseKekFromEnv, type Dek } from "@llm-quota/core";
@@ -80,14 +81,19 @@ export function buildServer(config: ServerConfig): Started {
 
   const tls = Boolean(config.tlsCertPath && config.tlsKeyPath);
 
+  // Wrap the API app in a root app so CORS + audit middleware run BEFORE the
+  // route handlers (registering `use` after routes would never execute them —
+  // terminal route handlers win in Hono's registration-order composition).
   const app = createApiApp({ db: config.db, kek: config.kek });
-  app.use("*", corsOnce(config.webOrigin));
-  app.use("*", auditLogger(config.logger));
+  const root = new Hono();
+  root.use("*", corsOnce(config.webOrigin));
+  root.use("*", auditLogger(config.logger));
+  root.route("/", app);
 
   const server = serve(
     tls
       ? {
-          fetch: app.fetch,
+          fetch: root.fetch,
           port: config.port,
           hostname: "0.0.0.0",
           createServer: createHttpsServer,
@@ -99,7 +105,7 @@ export function buildServer(config: ServerConfig): Started {
           } as HttpsServerOptions,
         }
       : {
-          fetch: app.fetch,
+          fetch: root.fetch,
           port: config.port,
           hostname: "0.0.0.0",
         },

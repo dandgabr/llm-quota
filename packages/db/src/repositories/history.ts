@@ -45,8 +45,8 @@ export class PostgresHistoryStore implements HistoryStore {
           spendingAggregates.window,
         ],
         set: {
-          spentAmount: sql`${spendingAggregates.spentAmount} + EXCLUDED.${spendingAggregates.spentAmount}`,
-          count: sql`${spendingAggregates.count} + EXCLUDED.${spendingAggregates.count}`,
+          spentAmount: sql`${spendingAggregates.spentAmount} + excluded.spent_amount`,
+          count: sql`${spendingAggregates.count} + excluded.count`,
           updatedAt: new Date(),
         },
       });

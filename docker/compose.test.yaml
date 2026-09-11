@@ -1,0 +1,29 @@
+# llm-quota — TEST compose (engine-agnostic: Docker OR Podman).
+# Dedicated to the Phase 8 integration + E2E suites. NOT the prod stack.
+#
+# Two roles on purpose (see docs/architecture/testing.md §2):
+#   - postgres (cluster superuser) -> owns migrate + seed; BYPASSES RLS.
+#   - llmquota_app (non-superuser)  -> subject to FORCE RLS; this is what the
+#     app-role pool in tests connects as, so tenant isolation is truly proven.
+#
+# Run:  (docker compose || podman-compose) -f docker/compose.test.yaml up -d
+# Teardown: ... down -v   (fresh DB each run, no named volume).
+
+name: llm-quota-test
+
+services:
+  postgres:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_USER: llmquota            # superuser for migrations + seed
+      POSTGRES_PASSWORD: llmquota-test
+      POSTGRES_DB: llm_quota_test
+    ports:
+      - "55432:5432"                     # distinct from the dev stack (5432)
+    volumes:
+      - ./pg/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro,z   # creates app role
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmquota -d llm_quota_test"]
+      interval: 1s
+      timeout: 2s
+      retries: 30

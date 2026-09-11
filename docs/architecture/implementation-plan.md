@@ -3,7 +3,7 @@
 This document tracks the phased implementation of **llm-quota**. It mirrors the
 plan persisted in ai-memory and is updated as each phase progresses.
 
-Current status: **Phase 2 complete** (PostgreSQL schema, migrations, repositories). Ready for **Phase 3**.
+Current status: **Phase 3 complete** (connector framework, provider registry, functional connectors). Ready for **Phase 4**.
 
 ## Phase 0 — Repository & Tooling Bootstrap ✅
 
@@ -52,11 +52,27 @@ monorepo (build/lint/typecheck/test) is green. Note: applying migrations / RLS
 requires a Postgres instance (docker-compose phase 7); validated via generated
 SQL + unit tests locally.
 
-## Phase 3 — Connector Framework + Provider Registry
+## Phase 3 — Connector Framework + Provider Registry ✅
 
 `ProviderConnector` contract + `ProviderRegistry`, and concrete connectors
 **Ollama Claude** and **OpenRouter (API)** with label autodetection. Contract
 tests + registry routing by `providerId + connectionType`.
+
+- [x] `Providence` raw-snapshot contract: connectors return a raw `QuotaSnapshot`
+  (shared `Quota` union); `core.summarizeQuota` does the normalization (wire
+  normalization). ADR-007.
+- [x] Injectable `HttpClient` (`createFetchHttpClient` default; stub in tests) —
+  contract + parsing tests run offline with canned fixtures, no credentials.
+- [x] Functional connectors `ollama-claude` and `openrouter` with parsing helpers
+  (`parseOllamaClaudeQuota`, `parseOllamaClaudeLabel`, `parseOpenRouterQuota`).
+- [x] `ProviderRegistry` routes by composite id `providerId/connectionType` and
+  `resolve(providerKey)` lists multiple connection types per provider.
+- [x] Contract tests (stub), parsing unit tests, connector→core normalization
+  integration tests, registry routing tests; all green.
+
+Acceptance met: contract tests pass (fake provider stub via `HttpClient`);
+registry routes by `providerId + connectionType`; both connectors return a quota
+snapshot in the standard shape and normalize through `core.summarizeQuota`.
 
 ## Phase 4 — Security Layer
 

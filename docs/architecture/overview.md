@@ -19,6 +19,8 @@ Status: draft — grows with implementation.
   `ProviderConnector` interface; a `ProviderRegistry` (the provider-management
   integrator) routes reads by `providerId + connectionType`. A provider may have
   several connection types registered as separate connectors (OAuth vs API).
+  See [ADR-007](adr/ADR-007-connector-framework-snapshot-http.md) for the raw
+  snapshot + injectable HTTP design.
 - **OIDC-standard auth** — identity is abstracted behind OIDC so Google / GitHub /
   Discord / SSO federation can be added without rework. Local identity, TOTP and
   WebAuthn sit beneath the same facade.

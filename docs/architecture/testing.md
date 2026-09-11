@@ -1,6 +1,6 @@
 # Testing strategy
 
-Status: plan — applied from [Phase 1](architecture/implementation-plan.md).
+Status: plan — applied from [Phase 1](architecture/implementation-plan.md); connector contract tests landed in **Phase 3**.
 
 ## By layer
 
@@ -9,9 +9,11 @@ Status: plan — applied from [Phase 1](architecture/implementation-plan.md).
     aggregate rollups (BVA/equivalence boundaries).
   - `auth`: OIDC abstraction, TOTP/WebAuthn flow functions, RBAC helpers.
   - `i18n`: message resolution, `en` / `pt-BR` / fallback.
-- **Connector contract tests** (Phase 3): each `ProviderConnector` is validated
-  against a fake/stub provider returning the standard quota shape, plus
-  integration against a real test account.
+- **Connector contract tests** (Phase 3, landed): each `ProviderConnector` is
+  validated against an in-memory `HttpClient` stub returning canned provider
+  fixtures (parsing + normalize via `core.summarizeQuota`), so no credentials or
+  network are needed in CI. Registry routing (composite id / multi
+  connection-type) is also tested. See ADR-007.
 - **Integration** (Phase 5): API endpoints against Postgres; scheduler tests
   prove minimized polling (staggered, per-window TTL); N+1-free repository
   queries verified with EXPLAIN.

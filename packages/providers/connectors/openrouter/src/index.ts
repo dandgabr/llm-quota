@@ -1,21 +1,85 @@
-import type { ProviderConnector, ProviderContext } from "@llm-quota/providers";
+import type {
+  ProviderConnector,
+  ProviderContext,
+  QuotaSnapshot,
+} from "@llm-quota/providers";
+import { createFetchHttpClient } from "@llm-quota/providers";
 
 /**
- * OpenRouter (API) connector — declared in Phase 3 as a second concrete
- * connector that validates the `ProviderConnector` pattern with two providers.
- * This is the Phase 0 marker/contract so the package typechecks.
+ * OpenRouter (API) connector (v1, Phase 3). Second concrete connector that
+ * validates the `ProviderConnector` + `HttpClient` pattern with a different
+ * provider payload. Reads account/quota data via the OpenRouter API and returns
+ * a raw `QuotaSnapshot` for `core` to normalize.
  */
-export const openRouterConnector: ProviderConnector = {
+
+/** Default base URL for the OpenRouter API (envar overridable). */
+const DEFAULT_BASE_URL = "https://openrouter.ai/api";
+
+/** Response shape from the OpenRouter account/credits endpoint (subset). */
+interface OpenRouterCreditsResponse {
+  data?: {
+    /** Monetary credits remaining in the account (USD). */
+    credits?: number;
+    currency?: string;
+  };
+  total_credits?: number;
+  usage?: number;
+  usage_ratio?: number;
+}
+
+/** Map a raw OpenRouter payload to a normalized `QuotaSnapshot`. */
+export function parseOpenRouterQuota(body: unknown): QuotaSnapshot {
+  const raw = (body ?? {}) as OpenRouterCreditsResponse;
+
+  // Credit-based: account credits remaining (shape 2.1).
+  const credits = raw.data?.credits ?? raw.total_credits;
+  if (typeof credits === "number") {
+    return {
+      kind: "credits",
+      currency: raw.data?.currency ?? "USD",
+      total: credits,
+    };
+  }
+
+  // Usage-ratio fallback (0..1): express as percentage shape.
+  if (typeof raw.usage_ratio === "number") {
+    const usedPercent = Math.round(raw.usage_ratio * 100);
+    return {
+      kind: "percent",
+      usedPercent,
+      remainingPercent: Math.max(0, 100 - usedPercent),
+    };
+  }
+
+  return { kind: "percent", usedPercent: 0, remainingPercent: 100 };
+}
+
+const base = {
   id: "openrouter/api",
   name: "OpenRouter",
-  connectionType: "api",
-  /** Reads the OpenRouter quota for a connection (Phase 3 implementation). */
-  async fetchQuota(_context: ProviderContext) {
-    // Phase 3: implement real quota read.
-    throw new Error("Not implemented in Phase 0");
+  connectionType: "api" as const,
+};
+
+export const openRouterConnector: ProviderConnector = {
+  ...base,
+
+  async fetchQuota(context: ProviderContext): Promise<QuotaSnapshot> {
+    const { apiKey, baseUrl = DEFAULT_BASE_URL } = context;
+    const http = context.http ?? createFetchHttpClient();
+    const url = `${baseUrl}/v1/credits`;
+    const res = await http.get(url, {
+      Accept: "application/json",
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    });
+    if (!res.ok) {
+      throw new Error(`OpenRouter quota request failed (${res.status})`);
+    }
+    return parseOpenRouterQuota(await res.json());
   },
-  /** Best-effort label autodetection (Phase 3 implementation). */
-  async discoverLabel(_context: ProviderContext) {
+
+  async discoverLabel(): Promise<string | null> {
+    // Best-effort: OpenRouter does not expose a display name via the credits
+    // endpoint; keep it null until a suitable account endpoint is wired.
     return null;
   },
 };

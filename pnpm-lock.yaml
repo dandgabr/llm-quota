@@ -287,6 +287,9 @@ importers:
 
   packages/providers/connectors/ollama-claude:
     dependencies:
+      '@llm-quota/core':
+        specifier: workspace:*
+        version: link:../../../core
       '@llm-quota/providers':
         specifier: workspace:*
         version: link:../..
@@ -303,6 +306,9 @@ importers:
 
   packages/providers/connectors/openrouter:
     dependencies:
+      '@llm-quota/core':
+        specifier: workspace:*
+        version: link:../../../core
       '@llm-quota/providers':
         specifier: workspace:*
         version: link:../..

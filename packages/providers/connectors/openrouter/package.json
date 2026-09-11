@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@llm-quota/core": "workspace:*",
     "@llm-quota/providers": "workspace:*",
     "@llm-quota/shared": "workspace:*"
   },

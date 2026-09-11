@@ -15,6 +15,7 @@ and set the old one's status to `superseded by [[decisions/<new>]]`.
 | [ADR-004](ADR-004-persistence-drizzle-ormsql-rls.md) | Persistence layer — Drizzle ORM, SQL migrations, tenant RLS | accepted |
 | [ADR-005](ADR-005-rls-snapshots-envelope-crypto.md) | RLS enforcement model, snapshot retention, envelope crypto | accepted |
 | [ADR-006](ADR-006-code-documentation-standard.md) | Code documentation standard — TSDoc and English | accepted |
+| [ADR-007](ADR-007-connector-framework-snapshot-http.md) | Connector framework: raw QuotaSnapshot + injectable HttpClient | accepted |
 
 ## Status legend
 

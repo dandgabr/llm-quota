@@ -6,13 +6,14 @@ reference + how-to + architecture.
 
 ## Index
 
-| Path | Topic |
-|---|---|
-| [Architecture overview](architecture/overview.md) | System architecture, monolith modules, client/server, connector pattern |
-| [Implementation plan](architecture/implementation-plan.md) | Phased roadmap (F0–F7) and current status |
-| [ADR index](adr/README.md) | Architecture decision records |
-| [Code doc conventions](architecture/code-documentation-conventions.md) | TSDoc / doc-comment standard for source code |
-| [Docker / deploy](deploy.md) | Deployment topology, compose, TLS, backup, PITR |
+| Path                                                                   | Topic                                                                      |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [Architecture overview](architecture/overview.md)                      | System architecture, monolith modules, client/server, connector pattern    |
+| [Implementation plan](architecture/implementation-plan.md)             | Phased roadmap (F0–F7) and current status                                  |
+| [API conventions](architecture/api-conventions.md)                     | REST verb matrix (incl. QUERY), TLS 1.3/HTTP-3, OAS 3.2, errors/pagination |
+| [ADR index](adr/README.md)                                             | Architecture decision records                                              |
+| [Code doc conventions](architecture/code-documentation-conventions.md) | TSDoc / doc-comment standard for source code                               |
+| [Docker / deploy](deploy.md)                                           | Deployment topology, compose, TLS, backup, PITR                            |
 
 ## Conventions
 

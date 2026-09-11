@@ -2,6 +2,25 @@
 
 Status: design — implementation lands in [Phase 4](architecture/implementation-plan.md).
 
+## Transport security (TLS 1.3 + HTTP/3)
+
+- **Edge (browser ↔ web/api)**: TLS 1.3 mandatory; HTTP/2 + HTTP/3 (QUIC)
+  supported, HTTP/3 preferential with automatic `h2 → h1.1` fallback. TLS 1.2
+  deprecated after a transition window. See
+  [ADR-008](adr/ADR-008-rest-api-tls-quic-query.md) and
+  [api-conventions](api-conventions.md).
+- **Internal DB (api ↔ postgres)**: Postgres TLS 1.3-only
+  (`ssl_min_protocol_version = TLSv1.3`) over its native wire protocol; no
+  HTTP/3. Client uses `sslmode=verify-full` + `sslrootcert`.
+- **Cipher suites (TLS 1.3, AEAD-only)**: `TLS_AES_256_GCM_SHA384`,
+  `TLS_AES_128_GCM_SHA256`, `TLS_CHACHA20_POLY1305_SHA256`.
+- **QUERY method**: safe + idempotent body-based reads use QUERY (RFC 10008)
+  under OpenAPI 3.2, reducing the CSRF surface vs POST-for-read. The SPA uses a
+  GET alias; the ingress must allow QUERY. See [api-conventions](api-conventions.md).
+- **Certificates**: production uses real-CA certificates with ACME renewal;
+  local testing uses a git-ignored self-signed cert (`scripts/cert-local.sh`),
+  refused in `NODE_ENV=production`.
+
 ## Envelope encryption (secrets at rest)
 
 All secrets — API keys and OAuth refresh tokens — are encrypted at rest:

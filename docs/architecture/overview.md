@@ -84,6 +84,9 @@ See [ADR-001](adr/ADR-001-modular-monolith-connectors-crypto-oidc.md) and
 - **Code documentation**: TSDoc for every public surface, English, with module
   headers. See [docs/architecture/code-documentation-conventions.md](code-documentation-conventions.md)
   and [ADR-006](adr/ADR-006-code-documentation-standard.md).
+- **API & transport**: full REST verb set (incl. **QUERY**, RFC 10008) under
+  OpenAPI 3.2; **TLS 1.3 + HTTP/3 preferential**. See
+  [api-conventions](api-conventions.md) and [ADR-008](adr/ADR-008-rest-api-tls-quic-query.md).
 
 ## Deploy (v1)
 

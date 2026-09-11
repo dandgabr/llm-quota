@@ -35,15 +35,15 @@ Acceptance: window computation, % math, currency conversion, 12-month rollup/evi
 
 - [x] Drizzle ORM selected as the persistence layer (see ADR-004).
 - [x] Schema (`packages/db/src/schema`): users, profiles/RBAC, identity providers,
-  quota providers, connections (multi-label, connection type), quota snapshots,
-  user sessions, quota/work sessions, spending aggregates, FX rate cache.
+      quota providers, connections (multi-label, connection type), quota snapshots,
+      user sessions, quota/work sessions, spending aggregates, FX rate cache.
 - [x] Encrypted secret columns (envelope-encryption fields reserved: `*_cipher`).
 - [x] Versioned SQL migration generated via Drizzle Kit (`drizzle/0000_*.sql`).
 - [x] Tenant Row-Level Security SQL (`drizzle/custom/0001_rls.sql`) with
-  `app.user_id` / `app.is_admin` / `app.is_supervisor_admin` session settings.
+      `app.user_id` / `app.is_admin` / `app.is_supervisor_admin` session settings.
 - [x] Repository implementations: `PostgresHistoryStore` (implements core
-  `HistoryStore`) and `PostgresFxRateSource` (implements core
-  `CurrencyRateSource`).
+      `HistoryStore`) and `PostgresFxRateSource` (implements core
+      `CurrencyRateSource`).
 - [x] Seed script registering the v1 providers (Ollama Claude, OpenRouter).
 - [x] `resolveDatabaseConfig` + Drizzle client (`createDb`).
 
@@ -59,16 +59,16 @@ SQL + unit tests locally.
 tests + registry routing by `providerId + connectionType`.
 
 - [x] `Providence` raw-snapshot contract: connectors return a raw `QuotaSnapshot`
-  (shared `Quota` union); `core.summarizeQuota` does the normalization (wire
-  normalization). ADR-007.
+      (shared `Quota` union); `core.summarizeQuota` does the normalization (wire
+      normalization). ADR-007.
 - [x] Injectable `HttpClient` (`createFetchHttpClient` default; stub in tests) —
-  contract + parsing tests run offline with canned fixtures, no credentials.
+      contract + parsing tests run offline with canned fixtures, no credentials.
 - [x] Functional connectors `ollama-claude` and `openrouter` with parsing helpers
-  (`parseOllamaClaudeQuota`, `parseOllamaClaudeLabel`, `parseOpenRouterQuota`).
+      (`parseOllamaClaudeQuota`, `parseOllamaClaudeLabel`, `parseOpenRouterQuota`).
 - [x] `ProviderRegistry` routes by composite id `providerId/connectionType` and
-  `resolve(providerKey)` lists multiple connection types per provider.
+      `resolve(providerKey)` lists multiple connection types per provider.
 - [x] Contract tests (stub), parsing unit tests, connector→core normalization
-  integration tests, registry routing tests; all green.
+      integration tests, registry routing tests; all green.
 
 Acceptance met: contract tests pass (fake provider stub via `HttpClient`);
 registry routes by `providerId + connectionType`; both connectors return a quota
@@ -84,16 +84,26 @@ abstraction, TOTP + WebAuthn, RBAC enforcement. ASVS L2 review.
 REST API (connections, quotas, history), job scheduler minimizing polling
 (staggered, per-window TTL), DTOs. Integration tests + performance smoke.
 
+Follows [ADR-008](adr/ADR-008-rest-api-tls-quic-query.md) and
+[api-conventions](api-conventions.md): full verb set incl. **QUERY** (RFC 10008)
+for complex safe reads under **OpenAPI 3.2**, `Idempotency-Key`, RFC 7807 errors,
+cursor pagination, rate-limit headers. Use a framework with arbitrary-method
+routing (Hono preferred; Fastify with `addHttpMethod`). Set `app.*` session
+settings for RLS. Ingress must allow `QUERY`.
+
 ## Phase 6 — Web Frontend (Vue 3 SPA)
 
 Auth (login, MFA), profile/roles, connect providers, connections with labels,
 quota/percentage views, spending history charts, currency display, i18n en/pt-BR.
-QA E2E (Playwright).
+QA E2E (Playwright). The SPA uses the **GET alias** for body-based reads
+(browsers do not emit QUERY without CORS preflight); the canonical API contract
+stays QUERY (ADR-008).
 
 ## Phase 7 — Deployment & Hardening
 
-docker-compose (api, web, postgres), env/TLS 1.3, CSP/HSTS/rate limiting,
-backup/PITR, observability.
+docker-compose (api, web, postgres), **TLS 1.3 (only)** + **HTTP/3 (QUIC)
+preferential** on the edge with `h2/h1.1` fallback; Postgres TLS 1.3-only;
+CSP/HSTS/rate limiting; backup/PITR; observability. Ingress allows QUERY.
 
 ---
 
@@ -108,3 +118,5 @@ scope, session semantics, granularity, deploy, supervisor RBAC).
 - ADR-001 modular monolith + connector pattern + envelope encryption + OIDC + 12-month retention.
 - ADR-002 i18n ICU MessageFormat on JSON v4 (i18next), `en` + `pt-BR`.
 - ADR-003 confirmed scope choices.
+- ADR-008 REST API: TLS 1.3 + HTTP/3 transport, OpenAPI 3.2 QUERY, RFC 7807,
+  idempotency, cursor pagination.

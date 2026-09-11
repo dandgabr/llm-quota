@@ -3,8 +3,8 @@
  * fresh database is usable. Run with `pnpm --filter @llm-quota/db seed`.
  */
 
-import { createDb, resolveDatabaseConfig } from "../src/index.js";
-import { quotaProviders } from "../src/schema/quotas.js";
+import { createDb, resolveDatabaseConfig } from "./client.js";
+import { quotaProviders } from "./schema/quotas.js";
 
 /** Provider definitions registered by the seed (v1 connectors). */
 export const DEFAULT_PROVIDERS = [

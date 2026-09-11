@@ -18,6 +18,7 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
+    "@llm-quota/auth": "workspace:*",
     "@llm-quota/core": "workspace:*",
     "@llm-quota/shared": "workspace:*",
     "drizzle-orm": "^0.45.2",

@@ -52,6 +52,28 @@ to one verb by its semantics; there is **no overloading of POST for safe reads**
   unknown methods with `405` unless allow-listed. Pick the ingress
   accordingly (see deploy).
 
+### Implemented endpoints (Phase 5, Hono)
+
+Framework: **Hono** (`app.get`/`app.on("QUERY", …)`). All routes are behind the
+`Authorization: Bearer <session-token>` middleware, which resolves the principal
+and (in real deployment) sets the `app.*` RLS GUCs.
+
+| Method   | Path                 | Description                                                           |
+| :------- | :------------------- | :-------------------------------------------------------------------- |
+| `GET`    | `/v1/connections`    | List the caller's provider connections (cursor paginated)             |
+| `POST`   | `/v1/connections`    | Create a connection; `secret` passed via `x-secret` header and sealed |
+| `GET`    | `/v1/quotas`         | Current quota snapshots for the caller's connections                  |
+| `GET`    | `/v1/quotas/summary` | Aggregated view (requires `supervisor`+); RBAC `hasRole`              |
+| `QUERY`  | `/v1/history`        | Complex safe/idempotent body-based history read (RFC 10008)           |
+| `GET`    | `/v1/history`        | **SPA compatibility alias** sharing the same handler                  |
+| `GET`    | `/v1/sessions`       | List the caller's active sessions                                     |
+| `DELETE` | `/v1/sessions/:id`   | Revoke a session (owner-scoped)                                       |
+
+Errors use RFC 7807 `application/problem+json`; mutations accept
+`Idempotency-Key`; list reads use cursor pagination; rate-limit headers are
+returned on quota-limited endpoints. The `QUERY`/`GET` history alias shares one
+handler so the browser (Phase 6) and API/gateway clients agree.
+
 ## Transport security — TLS 1.3 + HTTP/3
 
 Transport and application semantics are distinct; apply each to the right layer.

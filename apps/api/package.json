@@ -19,7 +19,8 @@
     "@llm-quota/core": "workspace:*",
     "@llm-quota/db": "workspace:*",
     "@llm-quota/providers": "workspace:*",
-    "@llm-quota/shared": "workspace:*"
+    "@llm-quota/shared": "workspace:*",
+    "hono": "^4.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

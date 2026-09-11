@@ -5,9 +5,9 @@ import {
   generateOidcState,
   generatePkcePair,
   validateState,
-  type HttpPostClient,
   type OidcDiscovery,
 } from "../src/oidc.js";
+import type { HttpClient } from "@llm-quota/shared";
 
 const discovery: OidcDiscovery = {
   authorizationEndpoint: "https://idp.example/authorize",
@@ -51,7 +51,7 @@ describe("OIDC", () => {
   });
 
   it("exchanges a code for tokens", async () => {
-    const http: HttpPostClient = {
+    const http: HttpClient = {
       post: async () => ({
         ok: true,
         status: 200,
@@ -62,7 +62,9 @@ describe("OIDC", () => {
           refresh_token: "rt",
           scope: "openid",
         }),
+        text: async () => "",
       }),
+      get: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
     };
     const tokens = await exchangeCodeForTokens(config, discovery, "code", "verifier", http);
     expect(tokens.access_token).toBe("at");
@@ -70,8 +72,14 @@ describe("OIDC", () => {
   });
 
   it("throws when token exchange fails", async () => {
-    const http: HttpPostClient = {
-      post: async () => ({ ok: false, status: 400, json: async () => ({ error: "invalid_grant" }) }),
+    const http: HttpClient = {
+      post: async () => ({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: "invalid_grant" }),
+        text: async () => "",
+      }),
+      get: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
     };
     await expect(exchangeCodeForTokens(config, discovery, "bad", "verifier", http)).rejects.toThrow(
       /Token exchange failed/,

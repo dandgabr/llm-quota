@@ -56,3 +56,5 @@ export interface Connection {
 }
 /** Roles for the RBAC model (requirement 9). */
 export type Role = "user" | "supervisor" | "admin";
+
+export * from "./http.js";

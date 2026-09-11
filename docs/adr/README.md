@@ -17,7 +17,7 @@ and set the old one's status to `superseded by [[decisions/<new>]]`.
 | [ADR-006](ADR-006-code-documentation-standard.md)             | Code documentation standard — TSDoc and English                                       | accepted |
 | [ADR-007](ADR-007-connector-framework-snapshot-http.md)       | Connector framework: raw QuotaSnapshot + injectable HttpClient                        | accepted |
 | [ADR-008](ADR-008-rest-api-tls-quic-query.md)                 | REST API: TLS 1.3 + HTTP/3 transport, OpenAPI 3.2 QUERY                               | accepted |
-| [ADR-009](ADR-009-security-layer-envelope-auth.md)            | Security layer: envelope crypto, TOTP/WebAuthn, OIDC, sessions, RBAC                  | accepted |
+| [ADR-009](ADR-009-security-layer-envelope-auth.md)             | Security layer: envelope crypto, TOTP/WebAuthn, OIDC, sessions, RBAC                 | accepted |
 
 ## Status legend
 

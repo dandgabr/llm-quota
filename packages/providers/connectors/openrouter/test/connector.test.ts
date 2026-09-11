@@ -8,6 +8,9 @@ const stubHttp = (body: unknown): HttpClient => ({
   async get() {
     return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
   },
+  async post() {
+    return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+  },
 });
 
 describe("openrouter: parseOpenRouterQuota", () => {

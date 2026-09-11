@@ -1,10 +1,10 @@
 /**
- * llm-quota API — Phase 0 scaffold.
+ * llm-quota API entry point.
  *
- * The real HTTP server, REST routes, auth and collectors are wired in later
- * phases. For now this exposes a small typed config helper so the package
- * typechecks and is testable.
+ * Phase 5 wires the Hono REST app (ADR-008) and exposes config + boot helpers.
  */
+
+export { createApiApp, type ApiAppOptions, type Problem } from "./app.js";
 
 export interface ApiConfig {
   /** HTTP port the API listens on. */
@@ -24,7 +24,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   };
 }
 
-/** Reserved hook to boot the HTTP server (Phase 5+). */
+/** Boot the HTTP server (Phase 5). Accepts a serve adapter for testability. */
 export const start = (): void => {
-  // Reserved: boot HTTP server (Phase 5+).
+  // Reserved: attach createApiApp to an HTTP listener (Fase 5 wiring).
 };

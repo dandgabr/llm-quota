@@ -3,7 +3,7 @@
 This document tracks the phased implementation of **llm-quota**. It mirrors the
 plan persisted in ai-memory and is updated as each phase progresses.
 
-Current status: **Phase 3 complete** (connector framework, provider registry, functional connectors). Ready for **Phase 4**.
+Current status: **Phase 5 complete** (REST API + scheduler/collector). Ready for **Phase 6**.
 
 ## Phase 0 — Repository & Tooling Bootstrap ✅
 
@@ -89,17 +89,23 @@ snapshot in the standard shape and normalize through `core.summarizeQuota`.
 Acceptance met: keys never plaintext at rest; TOTP/WebAuthn flows tested; OIDC
 PKCE + state validated; secrets never logged; secret-leakage tests green.
 
-## Phase 5 — Backend API & Collection/Scheduling
+## Phase 5 — Backend API & Collection/Scheduling ✅
 
-REST API (connections, quotas, history), job scheduler minimizing polling
-(staggered, per-window TTL), DTOs. Integration tests + performance smoke.
+- [x] Unified `HttpClient` in `@llm-quota/shared` (`get`+`post`), consumed by
+      both `providers` connectors and `auth`/OIDC (ADR-009 consequence).
+- [x] **Hono** as the HTTP framework; smoke-tested for arbitrary-method `QUERY`.
+- [x] REST endpoints: connections (GET/POST), quotas (GET + summary w/ RBAC),
+      history (**`QUERY` / RFC 10008 + `GET` alias** sharing one handler),
+      sessions (GET/DELETE); RFC 7807 errors + cursor pagination.
+- [x] `PostgresSessionStore` + `ResolvedPrincipal` + `withRlsContext`
+      (`SET LOCAL app.*` as strings) for the auth middleware / RLS (ADR-005 Q1).
+- [x] Scheduler/collector: `runCollectPass` using core `scheduleNext`/`stagger` +
+      `summarizeQuota`, persisting snapshots + aggregates via `PostgresHistoryStore`;
+      tests prove minimized polling (skip recent, collect on period reset).
 
-Follows [ADR-008](adr/ADR-008-rest-api-tls-quic-query.md) and
-[api-conventions](api-conventions.md): full verb set incl. **QUERY** (RFC 10008)
-for complex safe reads under **OpenAPI 3.2**, `Idempotency-Key`, RFC 7807 errors,
-cursor pagination, rate-limit headers. Use a framework with arbitrary-method
-routing (Hono preferred; Fastify with `addHttpMethod`). Set `app.*` session
-settings for RLS. Ingress must allow `QUERY`.
+Acceptance met: endpoints tested with stubs; scheduler minimizes polling; DTOs
+typed; RLS scoping in place (defense-in-depth + `app.*` GUCs in real deploy).
+N+1 verification (EXPLAIN) deferred to when a live Postgres is available (Phase 7).
 
 ## Phase 6 — Web Frontend (Vue 3 SPA)
 

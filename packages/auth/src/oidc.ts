@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createFetchHttpClient, type HttpClient } from "@llm-quota/shared";
 
 /**
  * OIDC abstraction (ADR-001). Supports authorization-code flow with PKCE and
@@ -33,15 +34,6 @@ export interface OidcUserInfo {
   email?: string;
   name?: string;
   picture?: string;
-}
-
-/** Minimal HTTP client the OIDC flow uses (matches providers `HttpClient` shape). */
-export interface HttpPostClient {
-  post(
-    url: string,
-    body: URLSearchParams,
-    headers?: Record<string, string>,
-  ): Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 }
 
 /** PKCE code pair generator (S256) — the verifier + derived challenge. */
@@ -81,26 +73,20 @@ export function buildAuthorizationUrl(
   return url;
 }
 
+/** OIDC discovery document (subset llm-quota consumes). */
 export interface OidcDiscovery {
   authorizationEndpoint: string;
   tokenEndpoint: string;
   userinfoEndpoint?: string;
 }
 
-/** Fetch the discovery document; accepts a pre-resolved one for offline tests. */
+/** Fetch the discovery document; accepts an injectable HttpClient for tests. */
 export async function fetchDiscovery(
   config: OidcClientConfig,
-  http?: {
-    get(url: string): Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
-  },
+  http?: HttpClient,
 ): Promise<OidcDiscovery> {
   const url = config.discoveryUrl ?? `${new URL(config.issuer).origin}/.well-known/openid-configuration`;
-  const client = http ?? {
-    get: async (u: string) => {
-      const res = await globalThis.fetch(u);
-      return { ok: res.ok, status: res.status, json: () => res.json() };
-    },
-  };
+  const client: HttpClient = http ?? createFetchHttpClient();
   const res = await client.get(url);
   if (!res.ok) throw new Error(`OIDC discovery failed (${res.status})`);
   const body = (await res.json()) as {
@@ -125,18 +111,9 @@ export async function exchangeCodeForTokens(
   discovery: OidcDiscovery,
   code: string,
   codeVerifier: string,
-  http?: HttpPostClient,
+  http?: HttpClient,
 ): Promise<OidcTokenResponse> {
-  const client = http ?? {
-    post: async (url: string, body: URLSearchParams) => {
-      const res = await globalThis.fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      });
-      return { ok: res.ok, status: res.status, json: () => res.json() };
-    },
-  };
+  const client: HttpClient = http ?? createFetchHttpClient();
   const params = new URLSearchParams({
     grant_type: "authorization_code",
     code,
@@ -165,25 +142,12 @@ export async function exchangeCodeForTokens(
 export async function fetchUserInfo(
   accessToken: string,
   discovery: OidcDiscovery,
-  http?: {
-    get(url: string, headers?: Record<string, string>): Promise<{
-      ok: boolean;
-      status: number;
-      json(): Promise<unknown>;
-    }>;
-  },
+  http?: HttpClient,
 ): Promise<OidcUserInfo> {
   if (!discovery.userinfoEndpoint) {
     throw new Error("OIDC discovery has no userinfo_endpoint");
   }
-  const client = http ?? {
-    get: async (url: string, headers?: Record<string, string>) => {
-      const res = await globalThis.fetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}`, ...headers },
-      });
-      return { ok: res.ok, status: res.status, json: () => res.json() };
-    },
-  };
+  const client: HttpClient = http ?? createFetchHttpClient();
   const res = await client.get(discovery.userinfoEndpoint, {
     Authorization: `Bearer ${accessToken}`,
   });

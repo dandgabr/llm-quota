@@ -7,6 +7,7 @@
  */
 
 import type { ConnectionType, Quota } from "@llm-quota/shared";
+import { type HttpClient, createFetchHttpClient as sharedCreateFetch } from "@llm-quota/shared";
 
 /**
  * Raw quota response a connector reads from its provider, in a shape the core
@@ -16,46 +17,11 @@ import type { ConnectionType, Quota } from "@llm-quota/shared";
  */
 export type QuotaSnapshot = Quota;
 
-/** Minimal HTTP response surface the connectors rely on. */
-export interface HttpResponse {
-  status: number;
-  ok: boolean;
-  json(): Promise<unknown>;
-  text(): Promise<string>;
-}
-
-/** Minimal HTTP client so connectors run on `fetch` in prod and a stub in tests. */
-export interface HttpClient {
-  get(url: string, headers?: Record<string, string>): Promise<HttpResponse>;
-}
-
-/** The fetch-like function injected into `createFetchHttpClient`. */
-type FetchFn = (url: string, init?: { method?: string; headers?: Record<string, string> }) => Promise<{
-  status: number;
-  ok: boolean;
-  json(): Promise<unknown>;
-  text(): Promise<string>;
-}>;
-
-/**
- * Default fetch implementation. `globalThis.fetch` is available at runtime on
- * Node >= 22; the base TS lib is ES2022 (no DOM) so it is read via a cast.
- */
-/** Global fetch impl, read via `unknown` cast (ES2022 lib has no DOM fetch). */
-const defaultFetch = (globalThis as unknown as { fetch?: FetchFn }).fetch;
+/** HTTP client contract, shared across connectors and OIDC (ADR-009). */
+export type { HttpClient, HttpResponse } from "@llm-quota/shared";
 
 /** Real `fetch`-backed HttpClient (Node >= 22 global fetch). */
-export const createFetchHttpClient = (fetchFn: FetchFn = defaultFetch!): HttpClient => ({
-  async get(url, headers) {
-    const res = await fetchFn(url, { method: "GET", headers });
-    return {
-      status: res.status,
-      ok: res.ok,
-      json: () => res.json(),
-      text: () => res.text(),
-    };
-  },
-});
+export const createFetchHttpClient: typeof sharedCreateFetch = sharedCreateFetch;
 
 /** Context a connector needs to read a quota for one connection. */
 export interface ProviderContext {

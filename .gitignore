@@ -12,6 +12,12 @@ node_modules/
 # Coverage
 **/coverage/
 
+# Playwright / E2E
+**/playwright-report/
+**/test-results/
+**/playwright/.cache/
+.playwright/
+
 # Environment
 .env
 .env.*
@@ -22,16 +28,25 @@ node_modules/
 certs/*
 !certs/.gitkeep
 
-# Logs
-*.log
-npm-debug.log*
-pnpm-debug.log*
+# Container / infra (artifacts, not the compose/Dockerfiles)
+**/pgdata/
+**/backups/
+docker/postgres-data/
+docker/backups/
+docker/.env
+docker/.cache/
+!docker/.env.example
 
 # Editor / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
 
 # TypeScript
 *.tsbuildinfo

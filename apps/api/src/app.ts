@@ -19,12 +19,23 @@ import {
   listSessionsByUser,
   resolvePrincipal,
   revokeSession,
+  createSession,
   type ResolvedPrincipal,
 } from "@llm-quota/db";
 import { parseKekFromEnv, type Dek } from "@llm-quota/core";
-import { hasRole } from "@llm-quota/auth";
+import {
+  hasRole,
+  generatePkcePair,
+  generateOidcState,
+  generateWebAuthnChallenge,
+  generateTotpSecret,
+  issueSessionToken,
+} from "@llm-quota/auth";
 
 type Variables = { principal: ResolvedPrincipal };
+
+/** Paths served without a bearer token (health + OIDC/MFA discovery/challenge). */
+const PUBLIC_PREFIXES = ["/health", "/auth"];
 
 /** Problem-details envelope (RFC 7807). */
 export interface Problem {
@@ -55,6 +66,10 @@ export function createApiApp({ db, kek, now }: ApiAppOptions) {
   void new PostgresHistoryStore(db.db);
 
   app.use("*", async (c, next) => {
+    // Skip auth for public endpoints (health, OIDC/MFA discovery).
+    if (PUBLIC_PREFIXES.some((p) => c.req.path.startsWith(p))) {
+      return next();
+    }
     const auth = c.req.header("authorization");
     if (!auth || !auth.startsWith("Bearer ")) {
       return c.json(problem(401, "Unauthorized", "Missing bearer token"), 401);
@@ -65,6 +80,40 @@ export function createApiApp({ db, kek, now }: ApiAppOptions) {
     }
     c.set("principal", principal);
     await next();
+  });
+
+  // Public: health + auth discovery/challenges (no bearer required).
+  app.get("/health", (c) => c.json({ ok: true, service: "llm-quota-api" }));
+
+  app.get("/auth/oidc/authorize", (c) => {
+    // Returns a PKCE challenge + state for the SPA to begin an OIDC flow.
+    const { verifier, challenge } = generatePkcePair();
+    const state = generateOidcState();
+    return c.json({ code_challenge: challenge, code_verifier: verifier, state });
+  });
+
+  app.get("/auth/mfa/totp/challenge", (c) => {
+    const secret = generateTotpSecret();
+    return c.json({ totp: { secret, verified: false } });
+  });
+
+  app.get("/auth/mfa/webauthn/challenge", (c) => {
+    return c.json({ challenge: generateWebAuthnChallenge() });
+  });
+
+  app.post("/auth/issue-session", async (c) => {
+    // Dev/self-host: mint a session token bound to a role (Phase 7 OIDC real
+    // flow replaces this; kept for local + E2E until an IdP is wired).
+    const body = await c.req.json<{ userId: string; role?: "user" | "supervisor" | "admin"; expiresInSec?: number }>().catch(() => null);
+    if (!body?.userId) {
+      return c.json(problem(400, "Bad Request", "userId required"), 400);
+    }
+    const { token, hash, signature } = issueSessionToken(process.env.SESSION_SECRET ?? "dev-secret-12345678901234567890");
+    void hash;
+    void signature;
+    const expiresAt = new Date(Date.now() + (body.expiresInSec ?? 3600) * 1000);
+    await createSession(db.db, { userId: body.userId, tokenHash: hash, expiresAt });
+    return c.json({ token, expiresAt: expiresAt.toISOString() });
   });
 
   app.get("/v1/connections", (c) => {

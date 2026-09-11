@@ -3,7 +3,7 @@
 This document tracks the phased implementation of **llm-quota**. It mirrors the
 plan persisted in ai-memory and is updated as each phase progresses.
 
-Current status: **Phase 6 complete** (Vue 3 SPA). Ready for **Phase 7**.
+Current status: **Phase 7 complete** (deploy, engine-agnostic containers). Ready for **Phase 8** (dedicated testing, QA review pending).
 
 ## Phase 0 — Repository & Tooling Bootstrap ✅
 
@@ -126,12 +126,48 @@ Acceptance met: SPA consumes the API with typed client, i18n en/pt-BR, currency
 via `Intl`, Chart.js history, auth guard + admin gate. Full OIDC login/MFA and
 Playwright E2E land in Phase 7 (needs a live API + Postgres and a real IdP).
 
-## Phase 7 — Deployment & Hardening
+## Phase 7 — Deployment & Hardening ✅
 
-docker-compose (api, web, postgres), **TLS 1.3 (only)** + **HTTP/3 (QUIC)
-preferential** on the edge with `h2/h1.1` fallback; Postgres TLS 1.3-only;
-CSP/HSTS/rate limiting; backup/PITR; observability. Ingress allows QUERY.
-OIDC/MFA login, Playwright E2E and N+1 EXPLAIN verification land here.
+- [x] Real API server: `apps/api/src/{server,bin}.ts` attach Hono via
+  `@hono/node-server`; TLS 1.3 when certs set; `NODE_ENV=production` refuses
+  `local.*`; CORS restricted to `WEB_ORIGIN`; ASVS V16 audit logger.
+- [x] Public endpoints `GET /health`, `/auth/oidc/authorize`,
+  `/auth/mfa/{totp,webauthn}/challenge`, `POST /auth/issue-session` (OIDC/MFA
+  challenge scaffolding for production; real IdP flow wired in Phase 8).
+- [x] Engine-agnostic containers: `apps/api/Dockerfile` + `apps/web/Dockerfile`
+  (multi-stage, Node 22 / nginx) and `docker/compose.yaml` (works with
+  `docker compose` OR `podman-compose`, validated locally with podman).
+- [x] Edge nginx (`docker/nginx/edge.conf`): TLS 1.3 (only) + HTTP/3 (QUIC)
+  preferential, HSTS/CSP, **QUERY** allow-list (ADR-008).
+- [x] Backup/PITR: `docker/backup.sh` (pg_dump) + `docker/restore.sh`.
+- [x] `.gitignore` hardened for test artifacts (Playwright reports/results,
+  pgdata/backups, docker/.env) so nothing test-related contaminates commits.
+
+Acceptance met (artifacts + podman-compose validation; engine-agnostic). Deploy
+to a real host with docker, OIDC real IdP, Playwright E2E and N+1 EXPLAIN are
+the focus of the dedicated **Phase 8 — Testing**.
+
+## Phase 8 — Dedicated Testing (banco real + Playwright) 【 proposed — QA review 】
+
+**Scope**: a full-quality phase dedicated exclusively to testing the end-to-end
+slice now that infra exists (compose `postgres` real, API live, SPA):
+- **Integration (real Postgres)**: apply Drizzle migrations + RLS, run repos /
+  collector / auth endpoints against a live DB; verify `N+1` via `EXPLAIN`.
+- **API E2E**: boot the real API via `server.ts`, seed a user, exercise
+  connections/quotas/history/sessions + OIDC/MFA challenge flows over the wire.
+- **Playwright usability**: core journeys — connect a provider, view daily/
+  weekly/monthly %, spending history chart, locale switch (en/pt-BR), light/dark
+  theme. Runs inside the compose stack.
+- **Security smoke**: secret-leakage (no plaintext at rest, no logs), RLS tenant
+  isolation between two users, ASVS L2 spot-checks, mutation (stakes) on core.
+- **Deliverables**: `e2e/` Playwright suite, `test/integration` (live DB),
+  coverage report, runbook for CI with the containerized Postgres.
+
+**Acceptance**: green E2E + integration on a live Postgres; N+1-free queries
+(EXPLAIN); Playwright journeys pass; QA sign-off.
+
+> Este plano está **proposed** e será **revisado pelo QA** (agent) antes da
+> execução — escopo, critérios e ordenação vão a validação.
 
 ---
 

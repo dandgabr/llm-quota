@@ -1,0 +1,71 @@
+# llm-quota — docker-compose (engine-agnostic: Docker OR Podman).
+# Both `docker compose` and `podman-compose` read this file.
+#
+# Services:
+#   api      — Hono REST API + collector (Node 22)
+#   web      — nginx serving the Vue SPA + proxying /v1 to api
+#   postgres — dedicated Postgres, TLS 1.3-only (see deploy)
+#
+# Secrets are supplied via env (docker/.env or the shell); never committed.
+
+name: llm-quota
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-llmquota}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-llm_quota}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmquota} -d ${POSTGRES_DB:-llm_quota}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-llmquota}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-llm_quota}
+      LLM_QUOTA_KEK: ${LLM_QUOTA_KEK:?set LLM_QUOTA_KEK (base64 32 bytes)}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (>=32 chars)}
+      WEB_ORIGIN: ${WEB_ORIGIN:-https://localhost}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL:-}
+      TLS_CERT_PATH: ${TLS_CERT_PATH:-}
+      TLS_KEY_PATH: ${TLS_KEY_PATH:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-https://localhost}
+    restart: unless-stopped
+    ports:
+      - "${WEB_HTTP_PORT:-8080}:80"
+    depends_on:
+      - api
+    networks: [internal]
+
+volumes:
+  pgdata:
+    name: ${COMPOSE_PROJECT_NAME:-llm-quota}_pgdata
+
+networks:
+  internal:

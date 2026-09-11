@@ -87,6 +87,9 @@ See [ADR-001](adr/ADR-001-modular-monolith-connectors-crypto-oidc.md) and
 - **API & transport**: full REST verb set (incl. **QUERY**, RFC 10008) under
   OpenAPI 3.2; **TLS 1.3 + HTTP/3 preferential**. See
   [api-conventions](api-conventions.md) and [ADR-008](adr/ADR-008-rest-api-tls-quic-query.md).
+- **Web frontend**: Vue 3 + Vite + Pinia + vue-router SPA consuming the API via a
+  typed client; i18n en/pt-BR, Chart.js history, `Intl` currency, auth guard.
+  See [implementation-plan](implementation-plan.md).
 
 ## Deploy (v1)
 

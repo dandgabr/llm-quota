@@ -3,7 +3,7 @@
 This document tracks the phased implementation of **llm-quota**. It mirrors the
 plan persisted in ai-memory and is updated as each phase progresses.
 
-Current status: **Phase 5 complete** (REST API + scheduler/collector). Ready for **Phase 6**.
+Current status: **Phase 6 complete** (Vue 3 SPA). Ready for **Phase 7**.
 
 ## Phase 0 — Repository & Tooling Bootstrap ✅
 
@@ -107,19 +107,31 @@ Acceptance met: endpoints tested with stubs; scheduler minimizes polling; DTOs
 typed; RLS scoping in place (defense-in-depth + `app.*` GUCs in real deploy).
 N+1 verification (EXPLAIN) deferred to when a live Postgres is available (Phase 7).
 
-## Phase 6 — Web Frontend (Vue 3 SPA)
+## Phase 6 — Web Frontend (Vue 3 SPA) ✅
 
-Auth (login, MFA), profile/roles, connect providers, connections with labels,
-quota/percentage views, spending history charts, currency display, i18n en/pt-BR.
-QA E2E (Playwright). The SPA uses the **GET alias** for body-based reads
-(browsers do not emit QUERY without CORS preflight); the canonical API contract
-stays QUERY (ADR-008).
+- [x] Typed API client (`apps/web/src/lib/api.ts`) wrapping the shared
+      `HttpClient`; reads use the **GET alias** (SPA compatibility, ADR-008).
+- [x] Pinia stores: `auth` (token/role/localStorage persistence) and `quota`
+      (quotas/connections/history + label lookup).
+- [x] `vue-router` with lazy views, auth guard (redirect to `/login`) and admin
+      role gate.
+- [x] Layout + i18n (en/pt-BR) with locale switch and persisted choice.
+- [x] Views: Login (token + role + MFA note), Dashboard (quota cards with
+      `Intl.NumberFormat`), Connections (add/list with secret via `x-secret`),
+      History (**Chart.js**/vue-chartjs), Admin (role-gated).
+- [x] Unit tests: `ApiClient` (stub HttpClient), router auth guard (jsdom),
+      scaffold; `vue-eslint-parser` + `@typescript-eslint/parser` wired for lint.
+
+Acceptance met: SPA consumes the API with typed client, i18n en/pt-BR, currency
+via `Intl`, Chart.js history, auth guard + admin gate. Full OIDC login/MFA and
+Playwright E2E land in Phase 7 (needs a live API + Postgres and a real IdP).
 
 ## Phase 7 — Deployment & Hardening
 
 docker-compose (api, web, postgres), **TLS 1.3 (only)** + **HTTP/3 (QUIC)
 preferential** on the edge with `h2/h1.1` fallback; Postgres TLS 1.3-only;
 CSP/HSTS/rate limiting; backup/PITR; observability. Ingress allows QUERY.
+OIDC/MFA login, Playwright E2E and N+1 EXPLAIN verification land here.
 
 ---
 

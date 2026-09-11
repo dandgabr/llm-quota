@@ -69,7 +69,7 @@ const othersQuota = () => quota.quotas.slice(1);
       v-else-if="quota.quotas.length === 0"
       class="card"
     >
-      No quota data yet.
+      {{ t("empty.quotas") }}
     </div>
 
     <div

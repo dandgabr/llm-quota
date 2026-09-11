@@ -11,12 +11,15 @@ const router = useRouter();
 const token = ref("");
 const role = ref<"user" | "supervisor" | "admin">("user");
 const error = ref<string | null>(null);
+const submitting = ref(false);
 
 async function submit() {
   if (!token.value.trim()) {
     error.value = "Enter the session token issued by the API.";
     return;
   }
+  submitting.value = true;
+  error.value = null;
   const api = new ApiClient(token.value.trim());
   try {
     await api.listSessions();
@@ -24,12 +27,17 @@ async function submit() {
     void router.push({ name: "dashboard" });
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Login failed";
+  } finally {
+    submitting.value = false;
   }
 }
 </script>
 
 <template>
-  <section class="card login">
+  <section
+    class="card login"
+    :aria-busy="submitting"
+  >
     <span class="micro">{{ t("app.title") }}</span>
     <h1>{{ t("auth.login") }}</h1>
     <p class="hint">
@@ -54,14 +62,15 @@ async function submit() {
       </label>
       <button
         type="submit"
-        :disabled="!token.trim()"
+        :disabled="!token.trim() || submitting"
       >
-        {{ t("auth.login") }}
+        {{ submitting ? t("app.loading") : t("auth.login") }}
       </button>
     </form>
 
     <p
       v-if="error"
+      role="alert"
       class="error"
     >
       {{ error }}

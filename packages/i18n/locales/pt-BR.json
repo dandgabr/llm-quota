@@ -4,6 +4,12 @@
     "tagline": "Acompanhe suas cotas de assinaturas de IA",
     "loading": "Carregando…"
   },
+  "empty": {
+    "quotas": "Sem dados de cota ainda.",
+    "history": "Sem histórico ainda.",
+    "connections": "Nenhuma conexão de provedor ainda.",
+    "saved": "Salvas"
+  },
   "nav": {
     "dashboard": "Painel",
     "connections": "Conexões",

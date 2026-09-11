@@ -198,6 +198,50 @@ select {
   border-color: var(--hairline-strong);
 }
 
+/* Secondary / ghost control: transparent, raises luminance on hover (no shadow) */
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: var(--border-hairline);
+  box-shadow: none;
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  transition: color var(--transition-fast), background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border-color: var(--hairline-strong);
+}
+.btn-ghost.is-active {
+  color: var(--accent-on-accent);
+  background: var(--accent-action);
+  border-color: transparent;
+}
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Flat loading skeleton: luminance pulse, no blur */
+.skeleton {
+  background: var(--surface-raised);
+  border: var(--border-hairline);
+  animation: pulse 1.4s var(--ease-out-quart) infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
 /* Respect reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   * {

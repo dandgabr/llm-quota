@@ -83,7 +83,7 @@ async function addConnection() {
 
     <div class="card list-card">
       <span class="micro">{{ t("connections.title") }}</span>
-      <h2>Saved</h2>
+      <h2>{{ t("empty.saved") }}</h2>
       <ul
         v-if="quota.connections.length"
         class="list"

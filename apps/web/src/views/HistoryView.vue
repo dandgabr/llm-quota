@@ -78,8 +78,8 @@ const chartOptions: ChartOptions<"bar"> = {
       <button
         v-for="g in (['daily', 'weekly', 'monthly'] as Gran[])"
         :key="g"
-        class="ghost"
-        :class="{ active: gran === g }"
+        class="btn-ghost"
+        :class="{ 'is-active': gran === g }"
         type="button"
         @click="gran = g"
       >
@@ -96,7 +96,7 @@ const chartOptions: ChartOptions<"bar"> = {
       v-else-if="points.length === 0"
       class="card"
     >
-      No history yet.
+      {{ t("empty.history") }}
     </div>
     <div
       v-else
@@ -118,25 +118,6 @@ const chartOptions: ChartOptions<"bar"> = {
   gap: var(--space-2);
   margin-bottom: var(--space-4);
 }
-.ghost {
-  background: transparent;
-  color: var(--text-secondary);
-  border: var(--border-hairline);
-  padding: var(--space-1) var(--space-3);
-  box-shadow: none;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-}
-.ghost:hover {
-  color: var(--text-primary);
-  border-color: var(--hairline-strong);
-}
-.ghost.active {
-  color: var(--accent-on-accent);
-  background: var(--accent-action);
-  border-color: transparent;
-}
 .chart-card {
   height: 320px;
   padding: var(--space-6);
@@ -146,7 +127,12 @@ const chartOptions: ChartOptions<"bar"> = {
   animation: pulse 1.4s var(--ease-out-quart) infinite;
 }
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
 }
 </style>

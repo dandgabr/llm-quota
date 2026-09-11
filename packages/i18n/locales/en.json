@@ -4,6 +4,12 @@
     "tagline": "Track your AI subscription quotas",
     "loading": "Loading…"
   },
+  "empty": {
+    "quotas": "No quota data yet.",
+    "history": "No history yet.",
+    "connections": "No provider connections yet.",
+    "saved": "Saved"
+  },
   "nav": {
     "dashboard": "Dashboard",
     "connections": "Connections",

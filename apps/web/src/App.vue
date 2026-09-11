@@ -46,7 +46,7 @@ function switchLocale(next: "en" | "pt-BR") {
       </nav>
       <span class="controls">
         <button
-          class="ghost"
+          class="btn-ghost"
           type="button"
           aria-label="Toggle color theme"
           @click="toggle()"
@@ -110,20 +110,6 @@ function switchLocale(next: "en" | "pt-BR") {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-}
-.ghost {
-  background: transparent;
-  color: var(--text-secondary);
-  border: var(--border-hairline);
-  box-shadow: none;
-  padding: var(--space-1) var(--space-3);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-}
-.ghost:hover {
-  color: var(--text-primary);
-  border-color: var(--hairline-strong);
 }
 .locale {
   width: auto;

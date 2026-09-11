@@ -18,7 +18,8 @@
     "test:watch": "turbo run test -- --watch",
     "clean": "turbo run clean && rimraf node_modules",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:integration": "turbo run test:integration --concurrency=1"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

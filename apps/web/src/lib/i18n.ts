@@ -1,19 +1,27 @@
 /**
  * i18n composable for the SPA.
  *
- * Provides a translator bound to the app's current locale. The root App provides
- * `"t"` (a plain Translator function) after loading it; views that need
- * translation call `useTranslator()` to inject it. Falls back to a pass-through
- * `(key) => key` when not provided (testable without the app root).
+ * Holds a module-level reactive translator so every view (and the root App
+ * itself) renders the active locale, and locale switches re-render instantly.
+ * Falls back to a pass-through `(key) => key` until the App loads the first
+ * translator (useful for isolated tests).
+ *
+ * NOTE: the previous provide/inject approach called `provide()` inside an
+ * async loader (after mount), so injection never happened and the whole app
+ * rendered raw i18n keys — caught by the Phase 8 Playwright suite.
  */
 
-import { inject } from "vue";
+import { ref } from "vue";
 import type { Translator } from "@llm-quota/i18n";
 
-const INJECTION_KEY = "t" as const;
+const current = ref<Translator>((key: string) => key);
 
-/** Return the injected translator (identity fallback when absent). */
+/** Swap the active translator (called by the root App on locale changes). */
+export function setTranslator(t: Translator): void {
+  current.value = t;
+}
+
+/** Stable translator function that always delegates to the active locale. */
 export function useTranslator(): Translator {
-  const t = inject<Translator>(INJECTION_KEY);
-  return t ?? ((key: string) => key);
+  return (key: string, options?: Record<string, unknown>) => current.value(key, options);
 }

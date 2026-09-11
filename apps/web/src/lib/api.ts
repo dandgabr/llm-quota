@@ -56,7 +56,7 @@ export class ApiClient {
 
   constructor(private readonly token: string, opts: ApiOptions = {}) {
     this.http = opts.http ?? createFetchHttpClient();
-    this.base = opts.baseUrl ?? resolveApiBaseUrl();
+    this.base = opts.baseUrl ?? resolveApiBaseUrl(import.meta.env as Record<string, string | undefined>);
   }
 
   /** Authorization header for every request. */

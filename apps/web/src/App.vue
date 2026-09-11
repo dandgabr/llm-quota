@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { provide, reactive } from "vue";
+import { reactive, watch } from "vue";
 import { createTranslator } from "@llm-quota/i18n";
-import { useTranslator } from "./lib/i18n.js";
+import { useTranslator, setTranslator } from "./lib/i18n.js";
 import { theme } from "./lib/theme.js";
 
 const t = useTranslator();
@@ -13,16 +13,19 @@ const { ui: themeUi, toggle, init } = theme;
 // Apply the persisted/system theme before first paint.
 init();
 
-async function reload(next: "en" | "pt-BR") {
-  const nextTranslator = await createTranslator(next);
-  provide("t", nextTranslator);
+// Load the translator synchronously at setup and on every locale switch.
+async function load(next: "en" | "pt-BR") {
+  setTranslator(await createTranslator(next));
 }
-void reload(ui.locale);
+void load(ui.locale);
+watch(
+  () => ui.locale,
+  (next) => void load(next),
+);
 
 function switchLocale(next: "en" | "pt-BR") {
   ui.locale = next;
   localStorage.setItem("llm-quota.locale", next);
-  void reload(next);
 }
 </script>
 
@@ -31,36 +34,28 @@ function switchLocale(next: "en" | "pt-BR") {
     <header class="topbar">
       <strong class="brand">{{ t("app.title") }}</strong>
       <nav class="nav">
-        <RouterLink to="/">
-          {{ t("nav.dashboard") }}
-        </RouterLink>
-        <RouterLink to="/connections">
-          {{ t("nav.connections") }}
-        </RouterLink>
-        <RouterLink to="/history">
-          {{ t("nav.history") }}
-        </RouterLink>
-        <RouterLink to="/admin">
-          {{ t("nav.admin") }}
-        </RouterLink>
+        <RouterLink to="/">{{ t("nav.dashboard") }}</RouterLink>
+        <RouterLink to="/connections">{{ t("nav.connections") }}</RouterLink>
+        <RouterLink to="/history">{{ t("nav.history") }}</RouterLink>
+        <RouterLink to="/admin">{{ t("nav.admin") }}</RouterLink>
       </nav>
       <span class="controls">
-        <button
-          class="btn-ghost"
-          type="button"
-          aria-label="Toggle color theme"
-          @click="toggle()"
-        >
+        <button class="btn-ghost" type="button" aria-label="Toggle color theme" @click="toggle()">
           {{ themeUi.theme === "dark" ? "◐ dark" : "◐ light" }}
         </button>
         <select
           class="locale"
           data-testid="locale-switch"
           :value="ui.locale"
+          aria-label="Language"
           @change="switchLocale(($event.target as HTMLSelectElement).value as 'en' | 'pt-BR')"
         >
-          <option value="en">EN</option>
-          <option value="pt-BR">PT-BR</option>
+          <option value="en">
+            EN
+          </option>
+          <option value="pt-BR">
+            PT-BR
+          </option>
         </select>
       </span>
     </header>

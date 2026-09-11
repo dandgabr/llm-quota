@@ -1,0 +1,28 @@
+{
+  "name": "@llm-quota/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "llm-quota SaaS web frontend (Vue 3 + Vite + Pinia), a client of the backend API.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "vue": "^3.5.13",
+    "pinia": "^2.3.0",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "eslint-plugin-vue": "^9.32.0",
+    "vite": "^6.0.5",
+    "vue-tsc": "^2.2.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

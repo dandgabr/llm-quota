@@ -1,0 +1,6 @@
+# ai-memory project scope configuration.
+# Static MCP clients (no session-id bridge) must pass workspace+project
+# explicitly on every project-scoped call. This file declares the canonical
+# names so agents and the server resolve this repo's scope deterministically.
+workspace = "default"
+project = "llm-quota"

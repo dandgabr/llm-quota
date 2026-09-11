@@ -1,0 +1,22 @@
+{
+  "name": "@llm-quota/auth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "llm-quota auth: OIDC abstraction, TOTP, WebAuthn and RBAC helpers.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@llm-quota/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

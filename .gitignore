@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+**/dist/
+**/build/
+**/out/
+.astro/
+.turbo/
+
+# Coverage
+**/coverage/
+
+# Environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+**/*.tsbuildinfo

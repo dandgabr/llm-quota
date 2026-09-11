@@ -1,0 +1,30 @@
+{
+  "name": "@llm-quota/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "llm-quota backend server: REST API, quota collectors, auth and RBAC.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@llm-quota/auth": "workspace:*",
+    "@llm-quota/core": "workspace:*",
+    "@llm-quota/db": "workspace:*",
+    "@llm-quota/providers": "workspace:*",
+    "@llm-quota/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "app": {
+    "title": "llm-quota",
+    "tagline": "Track your AI subscription quotas",
+    "loading": "Loading…"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "connections": "Connections",
+    "history": "History",
+    "settings": "Settings",
+    "admin": "Administration"
+  },
+  "auth": {
+    "login": "Sign in",
+    "logout": "Sign out",
+    "mfa": {
+      "totp": "Authenticator app (TOTP)",
+      "webauthn": "Passkey / security key"
+    }
+  },
+  "connections": {
+    "title": "Provider connections",
+    "add": "Add connection",
+    "label": "Label",
+    "noConnections": "No provider connections yet.",
+    "status": {
+      "ok": "Connected",
+      "error": "Connection error",
+      "unconfigured": "Not configured"
+    }
+  },
+  "quota": {
+    "used": "Used",
+    "remaining": "Remaining",
+    "reset": "Resets",
+    "window": {
+      "session": "Session",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "lifetime": "Lifetime"
+    }
+  },
+  "history": {
+    "title": "Spending history",
+    "daily": "Daily",
+    "weekly": "Weekly",
+    "monthly": "Monthly"
+  },
+  "admin": {
+    "users": "Users",
+    "identityProviders": "Identity providers"
+  },
+  "errors": {
+    "generic": "Something went wrong.",
+    "unauthorized": "You are not authorized to perform this action.",
+    "connectionNotFound": "Connection not found."
+  }
+}

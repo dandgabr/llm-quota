@@ -1,0 +1,60 @@
+{
+  "app": {
+    "title": "llm-quota",
+    "tagline": "Acompanhe suas cotas de assinaturas de IA",
+    "loading": "Carregando…"
+  },
+  "nav": {
+    "dashboard": "Painel",
+    "connections": "Conexões",
+    "history": "Histórico",
+    "settings": "Configurações",
+    "admin": "Administração"
+  },
+  "auth": {
+    "login": "Entrar",
+    "logout": "Sair",
+    "mfa": {
+      "totp": "Aplicativo autenticador (TOTP)",
+      "webauthn": "Passkey / chave de segurança"
+    }
+  },
+  "connections": {
+    "title": "Conexões de provedores",
+    "add": "Adicionar conexão",
+    "label": "Rótulo",
+    "noConnections": "Nenhuma conexão de provedor ainda.",
+    "status": {
+      "ok": "Conectado",
+      "error": "Erro de conexão",
+      "unconfigured": "Não configurado"
+    }
+  },
+  "quota": {
+    "used": "Usado",
+    "remaining": "Restante",
+    "reset": "Reinicia",
+    "window": {
+      "session": "Sessão",
+      "daily": "Diária",
+      "weekly": "Semanal",
+      "monthly": "Mensal",
+      "lifetime": "Vitalício"
+    }
+  },
+  "history": {
+    "title": "Histórico de gastos",
+    "daily": "Diário",
+    "weekly": "Semanal",
+    "monthly": "Mensal"
+  },
+  "admin": {
+    "users": "Usuários",
+    "identityProviders": "Provedores de identidade"
+  },
+  "errors": {
+    "generic": "Algo deu errado.",
+    "unauthorized": "Você não está autorizado a executar esta ação.",
+    "connectionNotFound": "Conexão não encontrada."
+  }
+}

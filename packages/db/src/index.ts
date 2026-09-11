@@ -1,26 +1,11 @@
 /**
- * llm-quota PostgreSQL package — Phase 0 scaffold.
+ * llm-quota PostgreSQL package (Phase 2).
  *
- * Concrete schema (users, profiles/RBAC, identity providers, quota providers,
- * connections, snapshots, sessions, aggregates), migrations, seed and the
- * repository layer are designed in Phase 2. This module currently exposes the
- * reserved package surface so it typechecks and can be depended on.
+ * Exposes the Drizzle client, schema, repository implementations and seed.
  */
 
-export interface DatabaseConfig {
-  url: string;
-  maxConnections?: number;
-}
-
-export function resolveDatabaseConfig(env: NodeJS.ProcessEnv = process.env): DatabaseConfig {
-  const url = env.DATABASE_URL ?? "";
-  if (!url) {
-    throw new Error(
-      "DATABASE_URL is required. See .env.example and docs/deploy.md.",
-    );
-  }
-  return {
-    url,
-    maxConnections: env.PG_MAX_CONNECTIONS ? Number(env.PG_MAX_CONNECTIONS) : 10,
-  };
-}
+export * from "./client.js";
+export * from "./schema/index.js";
+export * from "./repositories/history.js";
+export * from "./repositories/fx.js";
+export * from "./seed.js";

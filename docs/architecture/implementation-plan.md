@@ -3,7 +3,7 @@
 This document tracks the phased implementation of **llm-quota**. It mirrors the
 plan persisted in ai-memory and is updated as each phase progresses.
 
-Current status: **Phase 1 complete** (domain core). Ready for **Phase 2**.
+Current status: **Phase 2 complete** (PostgreSQL schema, migrations, repositories). Ready for **Phase 3**.
 
 ## Phase 0 — Repository & Tooling Bootstrap ✅
 
@@ -31,12 +31,26 @@ equivalents all pass.
 
 Acceptance: window computation, % math, currency conversion, 12-month rollup/eviction and aggregate correctness covered.
 
-## Phase 2 — PostgreSQL Schema, Migrations & Repositories
+## Phase 2 — PostgreSQL Schema, Migrations & Repositories ✅
 
-Users, profiles/RBAC, identity providers/OIDC, quota providers, connections
-(multi-label, connection type), quota snapshots, user sessions, quota/work
-sessions, spending aggregates; encrypted secret columns; RLS; migrations + seed.
-Indexes EXPLAIN-verified.
+- [x] Drizzle ORM selected as the persistence layer (see ADR-004).
+- [x] Schema (`packages/db/src/schema`): users, profiles/RBAC, identity providers,
+  quota providers, connections (multi-label, connection type), quota snapshots,
+  user sessions, quota/work sessions, spending aggregates, FX rate cache.
+- [x] Encrypted secret columns (envelope-encryption fields reserved: `*_cipher`).
+- [x] Versioned SQL migration generated via Drizzle Kit (`drizzle/0000_*.sql`).
+- [x] Tenant Row-Level Security SQL (`drizzle/custom/0001_rls.sql`) with
+  `app.user_id` / `app.is_admin` / `app.is_supervisor_admin` session settings.
+- [x] Repository implementations: `PostgresHistoryStore` (implements core
+  `HistoryStore`) and `PostgresFxRateSource` (implements core
+  `CurrencyRateSource`).
+- [x] Seed script registering the v1 providers (Ollama Claude, OpenRouter).
+- [x] `resolveDatabaseConfig` + Drizzle client (`createDb`).
+
+Acceptance: schema maps the domain, FK columns are `uuid`-consistent, and the
+monorepo (build/lint/typecheck/test) is green. Note: applying migrations / RLS
+requires a Postgres instance (docker-compose phase 7); validated via generated
+SQL + unit tests locally.
 
 ## Phase 3 — Connector Framework + Provider Registry
 

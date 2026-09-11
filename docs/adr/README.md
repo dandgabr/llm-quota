@@ -12,6 +12,7 @@ and set the old one's status to `superseded by [[decisions/<new>]]`.
 | [ADR-001](ADR-001-modular-monolith-connectors-crypto-oidc.md) | Modular monolith v1, connector pattern, envelope encryption, OIDC, 12-month retention | accepted |
 | [ADR-002](ADR-002-i18n-format.md) | i18n format — ICU MessageFormat on JSON v4 (i18next), `en` + `pt-BR` | accepted |
 | [ADR-003](ADR-003-confirmed-scope.md) | Confirmed scope choices (UI, FX, connectors, session semantics, deploy, RBAC) | accepted |
+| [ADR-004](ADR-004-persistence-drizzle-ormsql-rls.md) | Persistence layer — Drizzle ORM, SQL migrations, tenant RLS | accepted |
 
 ## Status legend
 

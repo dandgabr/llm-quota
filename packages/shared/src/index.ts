@@ -1,17 +1,11 @@
 /**
  * Shared domain types for llm-quota.
  *
- * Phase 0 scaffold — the core vocabulary is defined here so other packages and
- * the API can agree on shapes. Expanded as the domain solidifies in Phase 1.
+ * Core vocabulary agreed across packages. TypeScript monorepo, English.
  */
 
 /** Distinct periods a quota can be measured against. */
-export type QuotaWindow =
-  | "session"
-  | "daily"
-  | "weekly"
-  | "monthly"
-  | "lifetime";
+export type QuotaWindow = "session" | "daily" | "weekly" | "monthly" | "lifetime";
 
 /** How a quota is expressed: a relative percentage or monetary credits. */
 export type QuotaKind = "percent" | "credits";
@@ -24,12 +18,20 @@ export interface UsagePercent {
   resetsAt?: string;
 }
 
+/**
+ * Monetary credits. Captures both market shapes:
+ * - 2.1 account-level credits: only `total` present (X dollars in the account).
+ * - 2.2 capped quota: `used` + `limit` present (X used of Y quota).
+ */
 export interface UsageCredits {
   kind: "credits";
-  used: number;
-  limit: number;
-  total: number;
   currency: string;
+  /** Total credits in the account (shape 2.1). */
+  total?: number;
+  /** Amount used against a quota (shape 2.2). */
+  used?: number;
+  /** Quota limit against which `used` counts (shape 2.2). */
+  limit?: number;
   resetsAt?: string;
 }
 
@@ -51,3 +53,6 @@ export interface Connection {
   /** ISO created timestamp. */
   createdAt: string;
 }
+
+/** Roles for the RBAC model (requirement 9). */
+export type Role = "user" | "supervisor" | "admin";

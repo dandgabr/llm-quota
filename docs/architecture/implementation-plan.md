@@ -3,7 +3,7 @@
 This document tracks the phased implementation of **llm-quota**. It mirrors the
 plan persisted in ai-memory and is updated as each phase progresses.
 
-Current status: **Phase 0 complete** (bootstrap). Ready for **Phase 1**.
+Current status: **Phase 1 complete** (domain core). Ready for **Phase 2**.
 
 ## Phase 0 — Repository & Tooling Bootstrap ✅
 
@@ -20,12 +20,16 @@ equivalents all pass.
 > Note: `pnpm` must be run from `~/.local/bin` on this machine (global install);
 > `packageManager` is pinned to `pnpm@12.3.4`.
 
-## Phase 1 — Domain Core
+## Phase 1 — Domain Core ✅
 
-Quota windows (session/daily/weekly/monthly), percentage calculus, monetary
-credits, currency conversion (FX), 12-month history retention with
-daily/weekly/monthly aggregates and session-cycle rollup. Models user session and
-quota/work session as separate entities.
+- [x] Quota window logic (`windows.ts`): calendar anchors for daily/weekly/monthly, `windowKey`.
+- [x] Percentage + monetary-credit math (`math.ts`, `percentage.ts`, `credits.ts`): both credit shapes (account total vs used/limit), `summarizeQuota`.
+- [x] Currency conversion (`fx.ts`): `CurrencyRateSource` interface + daily-cache policy; DB-backed store deferred to Phase 2.
+- [x] History/retention (`history.ts`): 12-month cap, session-cycle rollup into daily/weekly/monthly aggregates, eviction boundary.
+- [x] Collection scheduling (`scheduler.ts`): pure `scheduleNext` (per-window interval + reset detection), `stagger`.
+- [x] Unit tests (28) incl. BVA boundaries; all green.
+
+Acceptance: window computation, % math, currency conversion, 12-month rollup/eviction and aggregate correctness covered.
 
 ## Phase 2 — PostgreSQL Schema, Migrations & Repositories
 

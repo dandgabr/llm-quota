@@ -22,11 +22,11 @@ describe("percentUsed", () => {
 
 describe("percentRemaining", () => {
   it("computes the complement", () => {
-    expect(percentRemaining(30)).toBe(70);
+    expect(percentRemaining(30, 100)).toBe(70);
   });
 
   it("clamps negatives", () => {
-    expect(percentRemaining(150)).toBe(0);
+    expect(percentRemaining(150, 100)).toBe(0);
   });
 });
 

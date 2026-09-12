@@ -298,6 +298,13 @@ export class ApiClient {
     return body.data ?? [];
   }
 
+  /** Rotate the current session; returns a fresh token (the old one dies). */
+  async rotateSession(): Promise<{ token: string; expiresAt: string }> {
+    return this.handle<{ token: string; expiresAt: string }>(
+      await this.http.post(`${this.base}/v1/sessions/rotate`, "", this.auth()),
+    );
+  }
+
   // ---- Account security (E3) ----------------------------------------------
 
   async enrollTotp(currentPassword: string): Promise<{ secret: string; uri: string }> {

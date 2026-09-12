@@ -55,8 +55,16 @@ replaces it.
   for privileged roles; recovery avoids permanent lockout.
 - Harder: password hashing (scrypt, memory-hard, concurrency-bounded) and
   challenge/recovery state must be operated; OIDC remains unwired.
-- Given up: passkeys and SSO in v1; idle-timeout and per-account lockout are
-  documented follow-ups (rate limiting is per-IP in-process).
+- Given up: passkeys and SSO in v1.
+- Hardening (E2–E5, 2026-09-12): recovery codes are high-entropy (160 bits),
+  HMAC+pepper at rest, fail-closed without `RECOVERY_PEPPER`; sensitive MFA
+  actions require a step-up (current password or a recent window); a durable
+  login lockout keyed by HMAC(email)+IP with exponential backoff replaced the
+  in-memory-only limit; sessions gained an idle timeout, a scoped activity
+  touch, and atomic rotation (`POST /v1/sessions/rotate`). The throttle/recovery
+  HMAC uses `AUTH_PEPPER` (mandatory in production).
+- Remaining follow-ups: periodic (time-based) rotation, an account-global soft
+  delay for distributed attacks, and recovery-code pepper rotation procedure.
 - Rejected: WebAuthn register hand-rolled in v1; OIDC enabled without full
   `id_token` validation + state/PKCE; disabling MFA via password reset.
 

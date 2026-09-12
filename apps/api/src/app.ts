@@ -28,6 +28,9 @@ import {
   resolvePrincipal,
   revokeSession,
   revokeSessionByToken,
+  markStepUp,
+  findSessionByTokenHash,
+  rotateSession,
   revokeAllSessionsFor,
   createSession,
   withRlsContext,
@@ -192,6 +195,13 @@ function windowBound(granularity: Granularity, value: string): string | null {
   return `${prefix}${instant.toISOString()}`;
 }
 
+/** Parse a positive integer env value; empty/NaN falls back to the default. */
+function envInt(name: string, def: number, min = 0): number {
+  const raw = process.env[name];
+  const n = raw === undefined || raw.trim() === "" ? Number.NaN : Number(raw);
+  return Number.isFinite(n) && n >= min ? n : def;
+}
+
 /** Create the REST API Hono app. */
 export function createApiApp({
   db,
@@ -217,33 +227,43 @@ export function createApiApp({
   // E4 login throttle config (env by default; override for tests).
   const throttle = loginThrottle ?? {
     enabled: process.env.LOCKOUT_ENABLED !== "0",
-    threshold: Number(process.env.LOCKOUT_IP_THRESHOLD ?? 5),
-    windowSeconds: Number(process.env.LOCKOUT_WINDOW_SECONDS ?? 900),
-    baseSeconds: Number(process.env.LOCKOUT_BASE_SECONDS ?? 30),
-    maxSeconds: Number(process.env.LOCKOUT_MAX_SECONDS ?? 3600),
+    threshold: envInt("LOCKOUT_IP_THRESHOLD", 5, 1),
+    windowSeconds: envInt("LOCKOUT_WINDOW_SECONDS", 900, 1),
+    baseSeconds: envInt("LOCKOUT_BASE_SECONDS", 30, 1),
+    maxSeconds: envInt("LOCKOUT_MAX_SECONDS", 3600, 1),
   };
-  const idleTtl = sessionIdleTtlSeconds ?? Number(process.env.SESSION_IDLE_TTL_SECONDS ?? 1800);
+  const idleTtl = sessionIdleTtlSeconds ?? envInt("SESSION_IDLE_TTL_SECONDS", 1800, 0);
   const authPepper = process.env.AUTH_PEPPER ?? "";
-  const recoveryPepper = process.env.RECOVERY_PEPPER ?? process.env.AUTH_PEPPER ?? "";
-  const stepUpTtlSeconds = Number(process.env.STEP_UP_TTL_SECONDS ?? 300);
+  // Pepper separation: recovery must NOT silently reuse the throttle pepper.
+  const recoveryPepper = process.env.RECOVERY_PEPPER ?? "";
+  const stepUpTtlSeconds = envInt("STEP_UP_TTL_SECONDS", 300, 0);
   const currentTime = () => now?.() ?? new Date();
+  // Fail-closed in production: without a real pepper, throttle keys/recovery
+  // would be computed with a public constant.
+  const pepperConfigured = isValidRecoveryPepper(authPepper);
+  if (process.env.NODE_ENV === "production" && !pepperConfigured) {
+    throw new Error("AUTH_PEPPER must be set (>= 32 chars) in production");
+  }
 
   /** HMAC the normalized subject (email) with the auth pepper for the throttle key. */
   const createHmacKey = (domain: string, value: string): string => {
-    const pepper = authPepper || "dev-only-insecure-pepper-change-me";
+    // In production a valid pepper is mandatory (checked at construction); in
+    // dev/test fall back to a fixed string so local runs work without env.
+    const pepper = pepperConfigured ? authPepper : "dev-only-insecure-pepper-change-me";
     return createHmac("sha256", pepper).update(`${domain}\u0000${value}`).digest("hex");
   };
   const subjectKeyFor = (email: string): string =>
     createHmacKey("subject", email.trim().toLowerCase());
   const ipHashFor = (ip: string): string => createHmacKey("ip", ip);
-  const clientIp = (c: { req: { header(n: string): string | undefined }; env: unknown }): string => {
+  const clientIp = (c: { req: { header(n: string): string | undefined }; env?: unknown }): string => {
     const trust = process.env.TRUST_PROXY === "1";
     const forwarded = trust
       ? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip")
       : undefined;
     return (
       forwarded ||
-      (c.env as { incoming?: { socket?: { remoteAddress?: string } } })?.incoming?.socket?.remoteAddress ||
+      (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket
+        ?.remoteAddress ||
       "unknown"
     );
   };
@@ -707,6 +727,15 @@ export function createApiApp({
       return problemJson(c, problem(429, "Too Many Requests", "Too many attempts", "account_locked"));
     }
     if (outcome.kind === "bad") {
+      // MFA failures feed the same durable throttle as password failures, so a
+      // holder of a valid password cannot brute-force TOTP by re-logging in.
+      const mfaAccount = await withRlsContext(
+        db.db,
+        { userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
+        (tx) => authStore.findById(userId, { db: tx }),
+        { "app.user_id": userId },
+      );
+      await recordFailure(subjectKeyFor(mfaAccount?.email ?? userId), ipHashFor(clientIp(c)));
       await withRlsContext(
         db.db,
         { userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
@@ -751,7 +780,7 @@ export function createApiApp({
       );
     }
     // Full MFA success clears the login throttle for this subject.
-    await resetFailures(subjectKeyFor(account?.email ?? ""));
+    await resetFailures(subjectKeyFor(account?.email ?? userId));
     const session = await issueLoginSession(c, userId, role, secret);
     return c.json(session);
   });
@@ -837,7 +866,7 @@ export function createApiApp({
   // E3 step-up: sensitive MFA operations require the current password (or a
   // recent step-up within STEP_UP_TTL_SECONDS). Never derived from the client.
   const requireStepUp = async (
-    c: { get(name: "principal"): ResolvedPrincipal; get(name: "requestId"): string },
+    c: { get(name: "principal"): ResolvedPrincipal; get(name: "requestId"): string; req: { header(n: string): string | undefined } },
     p: ResolvedPrincipal,
     currentPassword: string | undefined,
   ): Promise<{ ok: true } | { ok: false; status: number; problem: Problem }> => {
@@ -847,6 +876,12 @@ export function createApiApp({
     if (!currentPassword) {
       return { ok: false, status: 400, problem: problem(400, "Bad Request", "currentPassword required", "invalid_params") };
     }
+    // Step-up password attempts share the durable login throttle: a stolen
+    // session must not permit unlimited password guessing.
+    const account = await withRlsContext(db.db, p, (tx) => authStore.findById(p.userId, { db: tx }));
+    const subjectKey = subjectKeyFor(account?.email ?? p.userId);
+    const ipHash = ipHashFor(clientIp(c));
+    const lockedUntil = await isLocked(subjectKey, ipHash);
     const stored = await withRlsContext(
       db.db,
       p,
@@ -854,8 +889,9 @@ export function createApiApp({
       { "app.is_self_password_change": "true" },
     );
     const ok = stored ? await verifyPassword(currentPassword, stored) : false;
-    if (!ok) {
-      await dummyVerify(currentPassword);
+    if (!stored) await dummyVerify(currentPassword);
+    if (lockedUntil || !ok) {
+      await recordFailure(subjectKey, ipHash);
       await withRlsContext(
         db.db,
         p,
@@ -866,6 +902,12 @@ export function createApiApp({
           ),
       );
       return { ok: false, status: 401, problem: problem(401, "Unauthorized", "Password is incorrect", "unauthorized") };
+    }
+    // Persist the successful step-up on the current session (needs its id).
+    await resetFailures(subjectKey);
+    const bearer = c.req.header("authorization")?.slice(7);
+    if (bearer) {
+      await withRlsContext(db.db, p, (tx) => markStepUp(tx, hashToken(bearer), p.userId));
     }
     return { ok: true };
   };
@@ -1525,6 +1567,56 @@ export function createApiApp({
     const n = await withRlsContext(db.db, p, (tx) => revokeSession(tx, c.req.param("id"), p.userId));
     if (n === 0) return problemJson(c, problem(404, "Not Found", "Session not found", "not_found"));
     return c.json({ ok: true });
+  });
+
+  // Rotate the caller's own session: revoke the presented token and issue a
+  // fresh one (atomic; the old token is rejected immediately).
+  app.post("/v1/sessions/rotate", async (c) => {
+    const secret = process.env.SESSION_SECRET ?? "";
+    if (!isValidSessionSecret(secret)) {
+      return problemJson(c, problem(500, "Server Error", "SESSION_SECRET must be ≥ 32 chars", "internal"));
+    }
+    const p = c.get("principal");
+    const bearer = c.req.header("authorization")?.slice(7) ?? "";
+    const currentHash = hashToken(bearer);
+    // Find the session row backing this token (under app.is_auth).
+    const session = await withRlsContext(
+      db.db,
+      { userId: p.userId, role: p.role, isAdmin: p.isAdmin, isSupervisorAdmin: p.isSupervisorAdmin },
+      (tx) => findSessionByTokenHash(tx, currentHash, p.userId),
+    );
+    if (!session) {
+      return problemJson(c, problem(401, "Unauthorized", "Invalid session", "unauthorized"));
+    }
+    const { token, hash, signature } = issueSessionToken(secret);
+    const expiresAt = new Date(currentTime().getTime() + 12 * 3600 * 1000);
+    const rotated = await rotateSession(db.db, session.id, {
+      userId: p.userId,
+      tokenHash: hash,
+      signature,
+      expiresAt,
+      stepUpAt: p.stepUpAt ?? null,
+    });
+    if (!rotated.rotated) {
+      return problemJson(c, problem(409, "Conflict", "Session already rotated", "conflict"));
+    }
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.record(
+          {
+            action: "session.rotated",
+            actorUserId: p.userId,
+            actorRole: p.role,
+            targetType: "session",
+            targetId: rotated.newSessionId,
+            requestId: c.get("requestId"),
+          },
+          { db: tx },
+        ),
+    );
+    return c.json({ token, expiresAt: expiresAt.toISOString() });
   });
 
   return app;

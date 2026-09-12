@@ -5,106 +5,113 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1789136499443,
+      "when": 1789188900000,
       "tag": "0000_fat_the_initiative",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1789136506634,
+      "when": 1789188901000,
       "tag": "0001_fuzzy_krista_starr",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
-      "when": 1789172171030,
+      "when": 1789188902000,
       "tag": "0002_session_signature",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
-      "when": 1789174964553,
+      "when": 1789188903000,
       "tag": "0003_session_auth_policy",
       "breakpoints": true
     },
     {
       "idx": 4,
       "version": "7",
-      "when": 1789182678286,
+      "when": 1789188904000,
       "tag": "0004_user_management",
       "breakpoints": true
     },
     {
       "idx": 5,
       "version": "7",
-      "when": 1789182700000,
+      "when": 1789188905000,
       "tag": "0005_user_mgmt_policies",
       "breakpoints": true
     },
     {
       "idx": 6,
       "version": "7",
-      "when": 1789183300000,
+      "when": 1789188906000,
       "tag": "0006_phase_a_hardening",
       "breakpoints": true
     },
     {
       "idx": 7,
       "version": "7",
-      "when": 1789184313298,
+      "when": 1789188907000,
       "tag": "0007_audit_events",
       "breakpoints": true
     },
     {
       "idx": 8,
       "version": "7",
-      "when": 1789183600000,
+      "when": 1789188908000,
       "tag": "0008_audit_policies",
       "breakpoints": true
     },
     {
       "idx": 9,
       "version": "7",
-      "when": 1789184000000,
+      "when": 1789188909000,
       "tag": "0009_onboarding_authorizers",
       "breakpoints": true
     },
     {
       "idx": 10,
       "version": "7",
-      "when": 1789185405737,
+      "when": 1789188910000,
       "tag": "0010_auth_challenges_recovery",
       "breakpoints": true
     },
     {
       "idx": 11,
       "version": "7",
-      "when": 1789184500000,
+      "when": 1789188911000,
       "tag": "0011_auth_policies",
       "breakpoints": true
     },
     {
       "idx": 12,
       "version": "7",
-      "when": 1789185000000,
+      "when": 1789188912000,
       "tag": "0012_challenge_owner",
       "breakpoints": true
     },
     {
       "idx": 13,
       "version": "7",
-      "when": 1789188898543,
+      "when": 1789188913000,
       "tag": "0013_auth_lockout_session_state",
       "breakpoints": true
     },
     {
       "idx": 14,
       "version": "7",
-      "when": 1789187000000,
+      "when": 1789188914000,
       "tag": "0014_auth_lockout_session_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789188915000,
+      "tag": "0015_session_schema_reconcile",
       "breakpoints": true
     }
   ]

@@ -12,30 +12,42 @@ import {
   uniqueIndex,
   uuid,
   varchar,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { granularityEnum, id, timestamps } from "./enums.js";
 import { users } from "./auth.js";
 import { connections } from "./quotas.js";
 
 /** Authenticated login session of a user (distinct from a quota/work session). */
-export const userSessions = pgTable("user_sessions", {
-  id: id("id"),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  tokenHash: varchar("token_hash", { length: 128 }).notNull(),
-  /** HMAC-SHA256 of the raw token (defense-in-depth vs a leaked hash table). */
-  signature: varchar("signature", { length: 128 }),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  /** Last observed activity (idle timeout); touched at most once per throttle. */
-  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
-  /** When the current step-up reauthentication happened (E3 sensitive actions). */
-  stepUpAt: timestamp("step_up_at", { withTimezone: true }),
-  /** Rotation lineage: the session this one replaced (audit). */
-  replacedBy: uuid("replaced_by"),
-  revoked: boolean("revoked").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const userSessions = pgTable(
+  "user_sessions",
+  {
+    id: id("id"),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+    /** HMAC-SHA256 of the raw token (defense-in-depth vs a leaked hash table). */
+    signature: varchar("signature", { length: 128 }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** Last observed activity (idle timeout); touched at most once per throttle. */
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    /** When the current step-up reauthentication happened (E3 sensitive actions). */
+    stepUpAt: timestamp("step_up_at", { withTimezone: true }),
+    /** The session that replaced this one on rotation (audit lineage). */
+    replacedBy: uuid("replaced_by").references((): AnyPgColumn => userSessions.id, {
+      onDelete: "set null",
+    }),
+    revoked: boolean("revoked").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    tokenHashUnique: uniqueIndex("user_sessions_token_hash_unique").on(t.tokenHash),
+    expiresIdx: index("user_sessions_expires_idx").on(t.expiresAt),
+    lastSeenIdx: index("user_sessions_last_seen_idx").on(t.lastSeenAt),
+    userIdCreatedIdx: index("user_sessions_user_id_created_at_idx").on(t.userId, t.createdAt),
+  }),
+);
 
 /** Only-aggregates spending history (daily/weekly/monthly), 12-month retention. */
 export const spendingAggregates = pgTable(

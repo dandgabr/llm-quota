@@ -584,6 +584,14 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
         tokenHash: hashToken(enrollToken),
         expiresAt: new Date(Date.now() + 3600_000),
       });
+      // Step-up is required: without the current password the enroll is denied
+      // (checked BEFORE the successful enroll opens the step-up window).
+      const noStepUp = await fetch(`${base}/auth/mfa/totp/enroll`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${enrollToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(noStepUp.status).toBe(400);
       const enroll = await fetch(`${base}/auth/mfa/totp/enroll`, {
         method: "POST",
         headers: { Authorization: `Bearer ${enrollToken}`, "Content-Type": "application/json" },
@@ -591,13 +599,6 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
       });
       expect(enroll.status).toBe(200);
       const { secret } = (await enroll.json()) as { secret: string };
-      // Step-up is required: without the current password the enroll is denied.
-      const noStepUp = await fetch(`${base}/auth/mfa/totp/enroll`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${enrollToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      expect(noStepUp.status).toBe(400);
       // Compute a valid code and verify enrollment.
       const { generateTotp } = await import("@llm-quota/auth");
       const code = generateTotp(secret);
@@ -678,6 +679,69 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
       expect(res.status).toBe(400);
+    });
+
+    it("session rotation issues a new token and kills the old one", async () => {
+      const login = await fetch(`${base}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "d-user@test.local", password: "d-user-password-123" }),
+      });
+      // (password may have been changed by an earlier test; re-seed credentials)
+      if (login.status !== 200) {
+        await seedUserCredential(t.super, userId, "d-user-password-123");
+      }
+      const reseed = await fetch(`${base}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "d-user@test.local", password: "d-user-password-123" }),
+      });
+      const { token: oldToken } = (await reseed.json()) as { token: string };
+      const rotate = await fetch(`${base}/v1/sessions/rotate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${oldToken}` },
+      });
+      expect(rotate.status).toBe(200);
+      const { token: newToken } = (await rotate.json()) as { token: string };
+      expect(newToken).toBeTruthy();
+      expect(newToken).not.toBe(oldToken);
+      // Old token is immediately rejected; the new one works.
+      expect(
+        (await fetch(`${base}/v1/quotas`, { headers: { Authorization: `Bearer ${oldToken}` } })).status,
+      ).toBe(401);
+      expect(
+        (await fetch(`${base}/v1/quotas`, { headers: { Authorization: `Bearer ${newToken}` } })).status,
+      ).toBe(200);
+    });
+
+    it("MFA step-up: DELETE /auth/mfa/totp requires the current password", async () => {
+      const sid = await seedUser(t.super, { role: "user", email: "step@test.local" });
+      await seedUserCredential(t.super, sid, "step-password-1234");
+      const stepToken = "wire-step-token";
+      await createSession(t.super.db, {
+        userId: sid,
+        tokenHash: hashToken(stepToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+        stepUpAt: null,
+      });
+      // No password and no recent step-up -> 400.
+      const noPw = await fetch(`${base}/auth/mfa/totp`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${stepToken}` },
+      });
+      expect(noPw.status).toBe(400);
+      // Wrong password -> 401.
+      const wrong = await fetch(`${base}/auth/mfa/totp`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${stepToken}`, "X-Step-Up-Password": "nope" },
+      });
+      expect(wrong.status).toBe(401);
+      // Correct password -> 204; the session now carries a step-up window.
+      const ok = await fetch(`${base}/auth/mfa/totp`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${stepToken}`, "X-Step-Up-Password": "step-password-1234" },
+      });
+      expect(ok.status).toBe(204);
     });
   });
 });

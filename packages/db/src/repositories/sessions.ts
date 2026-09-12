@@ -88,14 +88,6 @@ export async function resolvePrincipal(
     if (idleTtl > 0 && now.getTime() - session.lastSeenAt.getTime() > idleTtl * 1000) {
       return null;
     }
-    // Touch last_seen_at, throttled, under the scoped GUC (pre-principal write).
-    if (now.getTime() - session.lastSeenAt.getTime() >= touchInterval * 1000) {
-      await tx.execute(sql`SELECT set_config('app.is_session_touch', 'true', true)`);
-      await tx.execute(sql`SELECT set_config('app.session_touch_hash', ${tokenHash}, true)`);
-      await tx.execute(
-        sql`UPDATE user_sessions SET last_seen_at = ${now} WHERE token_hash = ${tokenHash} AND revoked = false AND expires_at > now()`,
-      );
-    }
     await tx.execute(sql`SELECT set_config('app.user_id', ${session.userId}, true)`);
     const [user] = await tx
       .select({ role: users.role, isActive: users.isActive, deletedAt: users.deletedAt })
@@ -104,6 +96,15 @@ export async function resolvePrincipal(
       .limit(1);
     // Soft-deleted accounts must not authenticate (deleted_at wins over isActive).
     if (!user || !user.isActive || user.deletedAt) return null;
+    // Touch last_seen_at ONLY after the session+user are validated, throttled,
+    // under the scoped GUC (pre-principal write for this exact token).
+    if (now.getTime() - session.lastSeenAt.getTime() >= touchInterval * 1000) {
+      await tx.execute(sql`SELECT set_config('app.is_session_touch', 'true', true)`);
+      await tx.execute(sql`SELECT set_config('app.session_touch_hash', ${tokenHash}, true)`);
+      await tx.execute(
+        sql`UPDATE user_sessions SET last_seen_at = ${now} WHERE token_hash = ${tokenHash} AND revoked = false AND expires_at > now()`,
+      );
+    }
     return {
       userId: session.userId,
       role: user.role as Role,
@@ -136,7 +137,13 @@ export async function rotateSession(
     const revoked = await tx
       .update(userSessions)
       .set({ revoked: true })
-      .where(and(eq(userSessions.id, oldSessionId), eq(userSessions.revoked, false)))
+      .where(
+        and(
+          eq(userSessions.id, oldSessionId),
+          eq(userSessions.userId, input.userId),
+          eq(userSessions.revoked, false),
+        ),
+      )
       .returning({ id: userSessions.id });
     if (revoked.length === 0) return { rotated: false, newSessionId: null };
     const [row] = await tx
@@ -223,6 +230,48 @@ export async function revokeSessionByToken(db: DB, tokenHash: string, userId: st
     .where(and(eq(userSessions.tokenHash, tokenHash), eq(userSessions.userId, userId)))
     .returning({ id: userSessions.id });
   return result.length;
+}
+
+/** Find a live session row by token hash and owner (rotation lookup). */
+export async function findSessionByTokenHash(
+  db: DB,
+  tokenHash: string,
+  userId: string,
+): Promise<UserSessionRow | null> {
+  const [row] = await db
+    .select()
+    .from(userSessions)
+    .where(and(eq(userSessions.tokenHash, tokenHash), eq(userSessions.userId, userId)))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Mark the current session's step-up timestamp (owner-scoped). */
+export async function markStepUp(
+  db: DB,
+  tokenHash: string,
+  userId: string,
+  now: Date = new Date(),
+): Promise<void> {
+  await db
+    .update(userSessions)
+    .set({ stepUpAt: now })
+    .where(and(eq(userSessions.tokenHash, tokenHash), eq(userSessions.userId, userId)));
+}
+
+/** Delete revoked/expired sessions older than the retention window. */
+export async function sweepSessions(
+  db: DB,
+  now: Date = new Date(),
+  ttlSeconds = 7 * 24 * 3600,
+): Promise<number> {
+  const rows = await db
+    .delete(userSessions)
+    .where(
+      sql`(${userSessions.revoked} = true OR ${userSessions.expiresAt} < ${now}) AND ${userSessions.createdAt} < ${now} - make_interval(secs => ${ttlSeconds})`,
+    )
+    .returning({ id: userSessions.id });
+  return rows.length;
 }
 
 /**

@@ -28,6 +28,7 @@ import {
   PostgresInstanceStore,
   PostgresAuthStore,
   PostgresQuotaStore,
+  sweepSessions,
   type DbHandle,
   type ResolvedPrincipal,
 } from "@llm-quota/db";
@@ -60,8 +61,14 @@ export interface ServerConfig {
   logger?: (msg: string) => void;
 }
 
-/** Refuse loading local self-signed certs in production (deploy policy). */
-function assertProdCertAllowed(certPath: string, env: string): void {
+/** Parse a positive integer env value; empty/NaN falls back to the default. */
+function envInt(name: string, def: number, min = 0): number {
+  const raw = process.env[name];
+  const n = raw === undefined || raw.trim() === "" ? Number.NaN : Number(raw);
+  return Number.isFinite(n) && n >= min ? n : def;
+}
+
+/** Refuse loading local self-signed certs in production (deploy policy). */function assertProdCertAllowed(certPath: string, env: string): void {
   if (env === "production" && /local\.(crt|key)/.test(certPath)) {
     throw new Error("Refusing local self-signed cert in NODE_ENV=production");
   }
@@ -99,7 +106,7 @@ const DEV_ORIGINS = [
 ];
 
 const CORS_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS,QUERY";
-const CORS_HEADERS = "Authorization, Content-Type";
+const CORS_HEADERS = "Authorization, Content-Type, Idempotency-Key, X-Step-Up-Password, X-Request-Id";
 
 /**
  * CORS restricted to an exact origin allow-list: the configured `webOrigin`
@@ -469,15 +476,22 @@ export function startCollector(
       // rotated/expired sessions (E4/E5 retention).
       try {
         const authStore = new PostgresAuthStore(db.db, kek);
-        const ttl = Number(process.env.LOGIN_ATTEMPT_TTL_SECONDS ?? 86_400);
+        const ttl = envInt("LOGIN_ATTEMPT_TTL_SECONDS", 86_400, 1);
+        const sessionTtl = envInt("SESSION_RETENTION_SECONDS", 7 * 24 * 3600, 60);
         const attempts = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepLoginAttempts(ttl, now, { db: tx }), {
           "app.is_collector": "true",
         });
         const challenges = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepChallenges(now, { db: tx }), {
           "app.is_collector": "true",
         });
-        if (attempts || challenges) {
-          log(`[collector] auth sweep: ${attempts} attempts, ${challenges} challenges`);
+        const sessions = await withRlsContext(
+          db.db,
+          COLLECTOR,
+          (tx) => sweepSessions(tx, now, sessionTtl),
+          { "app.is_collector": "true" },
+        );
+        if (attempts || challenges || sessions) {
+          log(`[collector] auth sweep: ${attempts} attempts, ${challenges} challenges, ${sessions} sessions`);
         }
       } catch (err) {
         log(`[collector] auth sweep error: ${String(err)}`);

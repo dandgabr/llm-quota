@@ -147,17 +147,59 @@ describe("E5 — session idle + rotation", () => {
         lastSeenAt: new Date(),
       }),
     );
-    const first = await rotateSession(t.app.db, session.id, {
-      userId,
-      tokenHash: hashToken("race-new-a"),
-      expiresAt: new Date(Date.now() + 3600_000),
-    });
-    const second = await rotateSession(t.app.db, session.id, {
-      userId,
-      tokenHash: hashToken("race-new-b"),
-      expiresAt: new Date(Date.now() + 3600_000),
-    });
-    expect(first.rotated).toBe(true);
-    expect(second.rotated).toBe(false);
+    // Truly concurrent: only one update may win the revoked=false gate.
+    const [first, second] = await Promise.all([
+      rotateSession(t.app.db, session.id, {
+        userId,
+        tokenHash: hashToken("race-new-a"),
+        expiresAt: new Date(Date.now() + 3600_000),
+      }),
+      rotateSession(t.app.db, session.id, {
+        userId,
+        tokenHash: hashToken("race-new-b"),
+        expiresAt: new Date(Date.now() + 3600_000),
+      }),
+    ]);
+    expect([first.rotated, second.rotated].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("touches last_seen_at on a successful resolve (throttled write)", async () => {
+    const userId = await seedUser(t.super, { role: "user", email: "touch@test.local" });
+    const token = "touch-token-123456";
+    const before = new Date(Date.now() - 10 * 60_000);
+    await withRlsContext(t.app.db, owner(userId), (tx) =>
+      createSession(tx, {
+        userId,
+        tokenHash: hashToken(token),
+        expiresAt: new Date(Date.now() + 3600_000),
+        lastSeenAt: before,
+      }),
+    );
+    await resolvePrincipal(t.app.db, token, new Date(), undefined, { touchIntervalSeconds: 60 });
+    const [row] = await t.super.db
+      .execute<{ last_seen_at: string }>(sql`SELECT last_seen_at FROM user_sessions WHERE token_hash = ${hashToken(token)}`)
+      .then((r) => r.rows);
+    expect(new Date(row!.last_seen_at).getTime()).toBeGreaterThan(before.getTime());
+  });
+
+  it("does NOT touch last_seen_at when the account is blocked (invariant)", async () => {
+    const userId = await seedUser(t.super, { role: "user", email: "blocked@test.local" });
+    const token = "blocked-token-1234";
+    const before = new Date(Date.now() - 10 * 60_000);
+    await withRlsContext(t.app.db, owner(userId), (tx) =>
+      createSession(tx, {
+        userId,
+        tokenHash: hashToken(token),
+        expiresAt: new Date(Date.now() + 3600_000),
+        lastSeenAt: before,
+      }),
+    );
+    await t.super.db.execute(sql`UPDATE users SET is_active = false WHERE id = ${userId}`);
+    const principal = await resolvePrincipal(t.app.db, token, new Date(), undefined, { touchIntervalSeconds: 60 });
+    expect(principal).toBeNull();
+    const [row] = await t.super.db
+      .execute<{ last_seen_at: string }>(sql`SELECT last_seen_at FROM user_sessions WHERE token_hash = ${hashToken(token)}`)
+      .then((r) => r.rows);
+    expect(new Date(row!.last_seen_at).getTime()).toBe(before.getTime());
   });
 });

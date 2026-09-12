@@ -75,6 +75,7 @@ const PUBLIC_AUTH_PATHS = new Set([
   "/auth/login",
   "/auth/login/mfa",
   "/auth/oidc/authorize",
+  "/auth/mfa/webauthn/challenge",
 ]);
 
 function isPublicPath(path: string): boolean {
@@ -824,18 +825,23 @@ export function createApiApp({
       p,
       (tx) => authStore.findById(p.userId, { db: tx }),
     );
-    void current;
-    // Verify against the caller's own credential by id.
+    const stepUpSubject = subjectKeyFor(current?.email ?? p.userId);
+    // Verify against the caller's own credential by id, throttled like login.
     const stored = await withRlsContext(
       db.db,
       p,
       (tx) => userStore.getPasswordHash(p.userId, { db: tx }),
       { "app.is_self_password_change": "true" },
     );
+    const stepUpIp = ipHashFor(clientIp(c));
+    const stepUpLocked = await isLocked(stepUpSubject, stepUpIp);
     const ok = stored ? await verifyPassword(body.currentPassword, stored) : false;
-    if (!ok) {
+    if (!stored) await dummyVerify(body.currentPassword);
+    if (stepUpLocked || !ok) {
+      await recordFailure(stepUpSubject, stepUpIp);
       return problemJson(c, problem(401, "Unauthorized", "Current password is incorrect", "unauthorized"));
     }
+    await resetFailures(stepUpSubject);
     const newHash = await hashPassword(body.newPassword!);
     await withRlsContext(
       db.db,

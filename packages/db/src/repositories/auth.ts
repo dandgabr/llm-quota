@@ -203,8 +203,8 @@ export class PostgresAuthStore {
 
   /**
    * Record one failed login and compute the lock window with exponential
-   * backoff (capped). Single upsert serialized by the unique index; timestamps
-   * come from the DB clock.
+   * backoff (capped) in a SINGLE statement (atomic; the unique index serializes
+   * concurrent failures). Timestamps come from the DB clock.
    */
   async recordLoginFailure(
     subjectKey: string,
@@ -214,8 +214,10 @@ export class PostgresAuthStore {
   ): Promise<{ failedCount: number; lockedUntil: Date | null }> {
     const handle = opts.db ?? this.db;
     const res = await handle.execute<{ failed_count: number; locked_until: Date | null }>(sql`
-      INSERT INTO auth_login_attempts (subject_key, ip_hash, scope, failed_count, window_started_at, last_failed_at)
-      VALUES (${subjectKey}, ${ipHash}, 'account_ip', 1, now(), now())
+      INSERT INTO auth_login_attempts (subject_key, ip_hash, scope, failed_count, window_started_at, last_failed_at, locked_until)
+      VALUES (${subjectKey}, ${ipHash}, 'account_ip', 1, now(), now(),
+              CASE WHEN 1 >= ${params.threshold}
+                   THEN now() + make_interval(secs => ${params.baseSeconds}) END)
       ON CONFLICT (subject_key, ip_hash) DO UPDATE SET
         failed_count = CASE
           WHEN auth_login_attempts.window_started_at > now() - make_interval(secs => ${params.windowSeconds})
@@ -226,22 +228,22 @@ export class PostgresAuthStore {
             THEN auth_login_attempts.window_started_at
           ELSE now() END,
         last_failed_at = now(),
+        locked_until = CASE
+          WHEN (CASE WHEN auth_login_attempts.window_started_at > now() - make_interval(secs => ${params.windowSeconds})
+                     THEN auth_login_attempts.failed_count + 1 ELSE 1 END) >= ${params.threshold}
+          THEN now() + make_interval(secs => least(
+                 ${params.baseSeconds} * power(2,
+                   (CASE WHEN auth_login_attempts.window_started_at > now() - make_interval(secs => ${params.windowSeconds})
+                         THEN auth_login_attempts.failed_count + 1 ELSE 1 END) - ${params.threshold}),
+                 ${params.maxSeconds}))
+          ELSE NULL END,
         updated_at = now()
       RETURNING failed_count, locked_until
     `);
-    const failedCount = res.rows[0]?.failed_count ?? 1;
-    // Set the lock when the count first crosses the threshold.
-    if (failedCount >= params.threshold) {
-      const secs = Math.min(params.baseSeconds * 2 ** (failedCount - params.threshold), params.maxSeconds);
-      const lock = await handle.execute<{ locked_until: Date | null }>(sql`
-        UPDATE auth_login_attempts
-           SET locked_until = now() + make_interval(secs => ${secs}), updated_at = now()
-         WHERE subject_key = ${subjectKey} AND ip_hash = ${ipHash}
-         RETURNING locked_until
-      `);
-      return { failedCount, lockedUntil: lock.rows[0]?.locked_until ?? null };
-    }
-    return { failedCount, lockedUntil: res.rows[0]?.locked_until ?? null };
+    return {
+      failedCount: res.rows[0]?.failed_count ?? 1,
+      lockedUntil: res.rows[0]?.locked_until ?? null,
+    };
   }
 
   /** Clear the throttle rows for a subject on successful authentication. */

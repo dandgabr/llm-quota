@@ -11,7 +11,9 @@ COPY apps/web/ apps/web/
 RUN pnpm install --frozen-lockfile
 ARG VITE_API_URL=http://localhost:3000
 ENV VITE_API_URL=$VITE_API_URL
-RUN pnpm --filter @llm-quota/web build
+# Full workspace build first: the SPA imports @llm-quota/shared etc. whose
+# entrypoints are dist/ outputs.
+RUN pnpm -r build
 
 # Runtime: nginx serves the static SPA + proxies /v1 to the api service.
 FROM nginx:1.27-alpine

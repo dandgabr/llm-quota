@@ -5,8 +5,18 @@ import { runCollectPass, type CollectableConnection } from "../src/collector.js"
 
 const NOW = new Date("2026-09-11T12:00:00Z");
 
-/** A fake connector that returns a credits snapshot (shape 2.1 account total). */
+/** A fake connector that returns a credits snapshot (shape 2.2 used/limit). */
 const creditsConnector = (id: string): ProviderConnector => ({
+  id,
+  name: id,
+  connectionType: "api",
+  async fetchQuota() {
+    return { kind: "credits", currency: "USD", used: 25, limit: 100 };
+  },
+});
+
+/** A fake connector for shape 2.1 (account balance only — a stock, not a flow). */
+const balanceConnector = (id: string): ProviderConnector => ({
   id,
   name: id,
   connectionType: "api",
@@ -49,7 +59,48 @@ describe("collector: minimized polling", () => {
     const res = await runCollectPass(registry, store, [conn({ lastCollectedAt: undefined })], NOW);
     expect(res.collected).toBe(1);
     expect(res.skipped).toBe(0);
-    expect(aggregates.length).toBe(1); // credits -> one aggregate upserted
+    expect(aggregates.length).toBe(1); // credits (used present) -> one aggregate
+  });
+
+  it("does NOT book a spending aggregate for balance-only credits (stock, not flow)", async () => {
+    const registry = new ProviderRegistry();
+    registry.register(balanceConnector("openrouter/api"));
+    const { store, aggregates } = makeHistory();
+    const res = await runCollectPass(
+      registry,
+      store,
+      [conn({ connectorId: "openrouter/api", lastCollectedAt: undefined })],
+      NOW,
+    );
+    expect(res.collected).toBe(1); // the read still succeeds
+    expect(aggregates.length).toBe(0); // `total` is a point-in-time balance
+  });
+
+  it("contains a connector failure and counts it without aborting the pass", async () => {
+    const registry = new ProviderRegistry();
+    registry.register({
+      id: "failing/api",
+      name: "failing",
+      connectionType: "api",
+      fetchQuota: async () => {
+        throw new Error("upstream 500");
+      },
+    });
+    registry.register(creditsConnector("ollama-claude/api"));
+    const { store, aggregates } = makeHistory();
+    const res = await runCollectPass(
+      registry,
+      store,
+      [
+        conn({ id: "c-bad", connectorId: "failing/api" }),
+        conn({ id: "c-good", lastCollectedAt: undefined }),
+      ],
+      NOW,
+      0, // no spread => deterministic ordering
+    );
+    expect(res.failed).toBe(1);
+    expect(res.collected).toBe(1);
+    expect(aggregates.length).toBe(1);
   });
 
   it("skips a connection that ran recently (not due)", async () => {

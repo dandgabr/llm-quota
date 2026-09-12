@@ -9,6 +9,7 @@
 import { defineStore } from "pinia";
 import type { Role } from "@llm-quota/shared";
 import { ApiClient, type ApiOptions } from "../lib/api";
+import { safeGetItem, safeRemoveItem, safeSetItem } from "../lib/storage";
 
 const TOKEN_KEY = "llm-quota.token";
 const ROLE_KEY = "llm-quota.role";
@@ -31,8 +32,8 @@ function clientFor(token: string, opts?: ApiOptions): ApiClient {
 
 export const useAuthStore = defineStore("auth", {
   state: (): AuthState => ({
-    token: localStorage.getItem(TOKEN_KEY),
-    role: (localStorage.getItem(ROLE_KEY) as Role | null) ?? null,
+    token: safeGetItem(TOKEN_KEY),
+    role: (safeGetItem(ROLE_KEY) as Role | null) ?? null,
   }),
   getters: {
     isAuthenticated: (s) => !!s.token,
@@ -44,15 +45,15 @@ export const useAuthStore = defineStore("auth", {
     login(input: LoginInput) {
       this.token = input.token;
       this.role = input.role ?? null;
-      localStorage.setItem(TOKEN_KEY, input.token);
-      if (input.role) localStorage.setItem(ROLE_KEY, input.role);
+      safeSetItem(TOKEN_KEY, input.token);
+      if (input.role) safeSetItem(ROLE_KEY, input.role);
     },
     /** Clear the session locally. */
     logout() {
       this.token = null;
       this.role = null;
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(ROLE_KEY);
+      safeRemoveItem(TOKEN_KEY);
+      safeRemoveItem(ROLE_KEY);
     },
     /** API accessor; returns null when unauthenticated. */
     api(opts?: ApiOptions): ApiClient | null {

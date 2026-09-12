@@ -10,6 +10,7 @@
  */
 
 import type { Quota, QuotaWindow } from "@llm-quota/shared";
+import type { PostgresQuotaStore } from "@llm-quota/db";
 import {
   summarizeQuota,
   scheduleNext,
@@ -36,16 +37,30 @@ export interface CollectableConnection {
 export interface CollectResult {
   collected: number;
   skipped: number;
+  /** Connections whose fetch/persist failed (error isolated per connection). */
+  failed: number;
   nextRuns: { connectionId: string; at: string }[];
 }
+
+/** Persistence boundary for raw snapshots (optional collector output). */
+export interface SnapshotSink {
+  insertSnapshot(
+    input: Parameters<PostgresQuotaStore["insertSnapshot"]>[0],
+  ): Promise<void>;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Run one collection pass over the given connections. Only schedules reads that
  * are due (per-window interval + reset), staggering simultaneous connector calls
- * to avoid a thundering herd, and persists aggregates for every read.
+ * to avoid a thundering herd, and persists aggregates for every read. A single
+ * connection failure is contained (counted in `failed`) and never aborts the
+ * pass.
  *
  * `connectorId` resolves against `registry.get(connectorId)`; when absent the
- * connection is skipped.
+ * connection is skipped. When `snapshots` is provided the raw read is also
+ * persisted (7-day diagnostics retention, ADR-005).
  */
 export async function runCollectPass(
   registry: ProviderRegistry,
@@ -53,6 +68,7 @@ export async function runCollectPass(
   connections: CollectableConnection[],
   now: Date = new Date(),
   spreadMs = 1500,
+  snapshots?: SnapshotSink,
 ): Promise<CollectResult> {
   // 1. Decide which connections are due per window.
   const due: { conn: CollectableConnection; at: Date }[] = [];
@@ -74,57 +90,87 @@ export async function runCollectPass(
   );
 
   let collected = 0;
+  let failed = 0;
   const nextRuns: { connectionId: string; at: string }[] = [];
 
-  // 3. Read + normalize + persist, honoring the stagger order.
+  // 3. Read + normalize + persist, honoring the stagger order (await the slot).
   for (const run of staggered) {
     const item = due.find((d) => d.conn.id === run.connectionId);
     if (!item) continue;
+    const waitMs = run.at.getTime() - Date.now();
+    if (waitMs > 0) await sleep(Math.min(waitMs, spreadMs * due.length));
     const connector = registry.get(item.conn.connectorId);
     if (!connector) {
       skippedNow.push(item.conn);
       continue;
     }
-    const snapshot: Quota = await connector.fetchQuota({
-      connectionId: item.conn.id,
-      connectionType: connector.connectionType,
-      apiKey: item.conn.secret,
-    });
-
-    // Normalize into the domain summary (wire normalization, ADR-007).
-    const summary = summarizeQuota(snapshot);
-
-    // Persist a spending aggregate (money from credits). Slots map a connection's
-    // window to a granularity: daily/weekly/monthly for those calendar windows;
-    // session/lifetime fall back to daily (the finest persisted granularity).
-    if (snapshot.kind === "credits") {
-      const granularity =
-        item.conn.window === "daily"
-          ? "daily"
-          : item.conn.window === "weekly"
-            ? "weekly"
-            : item.conn.window === "monthly"
-              ? "monthly"
-              : "daily";
-      const aggregate: Aggregate = {
-        granularity,
-        windowKey: windowKey(item.conn.window === "session" || item.conn.window === "lifetime" ? "daily" : item.conn.window, run.at),
-        userId: item.conn.userId,
+    try {
+      const snapshot: Quota = await connector.fetchQuota({
         connectionId: item.conn.id,
-        spentAmount: snapshot.used ?? snapshot.total ?? 0,
-        currency: snapshot.currency,
-        count: 1,
-      };
-      await history.upsertAggregate(aggregate);
+        connectionType: connector.connectionType,
+        apiKey: item.conn.secret,
+      });
+
+      // Normalize into the domain summary (wire normalization, ADR-007).
+      const summary = summarizeQuota(snapshot);
+
+      // Persist the raw snapshot (diagnostics; evicted by the scheduler TTL).
+      if (snapshots) {
+        const credits =
+          snapshot.kind === "credits"
+            ? { used: snapshot.used, limit: snapshot.limit, total: snapshot.total }
+            : undefined;
+        const resetIso = snapshot.resetsAt;
+        await snapshots.insertSnapshot({
+          connectionId: item.conn.id,
+          kind: snapshot.kind,
+          window: item.conn.window,
+          currency: snapshot.kind === "credits" ? snapshot.currency : undefined,
+          credits,
+          usedPercent: summary.usedPercent,
+          remainingPercent: summary.remainingPercent,
+          resetsAt: resetIso ? new Date(resetIso) : undefined,
+          readAt: run.at,
+        });
+      }
+
+      // Persist a SPENDING aggregate only for real usage deltas: `used` is
+      // spend since window start; a credits-balance read (`total` only) is a
+      // point-in-time stock, never a flow — adding it per poll would inflate
+      // the aggregates linearly. Slots map a connection's window to a
+      // granularity: daily/weekly/monthly for those calendar windows;
+      // session/lifetime fall back to daily (the finest persisted granularity).
+      if (snapshot.kind === "credits" && typeof snapshot.used === "number") {
+        const granularity =
+          item.conn.window === "daily"
+            ? "daily"
+            : item.conn.window === "weekly"
+              ? "weekly"
+              : item.conn.window === "monthly"
+                ? "monthly"
+                : "daily";
+        const aggregate: Aggregate = {
+          granularity,
+          windowKey: windowKey(item.conn.window === "session" || item.conn.window === "lifetime" ? "daily" : item.conn.window, run.at),
+          userId: item.conn.userId,
+          connectionId: item.conn.id,
+          spentAmount: snapshot.used,
+          currency: snapshot.currency,
+          count: 1,
+        };
+        await history.upsertAggregate(aggregate);
+      }
+      collected += 1;
+      nextRuns.push({ connectionId: item.conn.id, at: run.at.toISOString() });
+    } catch {
+      failed += 1;
     }
-    void summary;
-    collected += 1;
-    nextRuns.push({ connectionId: item.conn.id, at: run.at.toISOString() });
   }
 
   return {
     collected,
     skipped: skippedNow.length,
+    failed,
     nextRuns,
   };
 }

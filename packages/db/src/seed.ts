@@ -4,7 +4,7 @@
  */
 
 import { createDb, resolveDatabaseConfig } from "./client.js";
-import { quotaProviders } from "./schema/quotas.js";
+import { quotaProviders, users } from "./schema/index.js";
 
 /** Provider definitions registered by the seed (v1 connectors). */
 export const DEFAULT_PROVIDERS = [
@@ -15,6 +15,10 @@ export const DEFAULT_PROVIDERS = [
 /**
  * Seed default quota providers into a fresh database. Idempotent: rows already
  * present for a provider key + type are left untouched. Returns rows seeded.
+ *
+ * Bootstrap admin: when `SEED_ADMIN_EMAIL` is set, an active user with that
+ * email is created (role from `SEED_ADMIN_ROLE`, default `admin`) so a fresh
+ * deployment has a principal to authenticate with. Idempotent per email.
  */
 export async function seed(): Promise<number> {
   const config = resolveDatabaseConfig();
@@ -27,6 +31,15 @@ export async function seed(): Promise<number> {
       .values(p)
       .onConflictDoNothing({ target: [quotaProviders.providerKey, quotaProviders.connectionType] });
     seeded += 1;
+  }
+  const adminEmail = process.env.SEED_ADMIN_EMAIL;
+  if (adminEmail) {
+    const role = (process.env.SEED_ADMIN_ROLE ?? "admin") as "user" | "supervisor" | "admin";
+    await db
+      .insert(users)
+      .values({ email: adminEmail, role, isActive: true })
+      .onConflictDoNothing({ target: users.email });
+    console.log(`seeded bootstrap admin ${adminEmail} (role=${role})`);
   }
   await handle.close();
   return seeded;

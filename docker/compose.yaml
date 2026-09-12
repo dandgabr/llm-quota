@@ -2,9 +2,15 @@
 # Both `docker compose` and `podman-compose` read this file.
 #
 # Services:
-#   api      — Hono REST API + collector (Node 22)
-#   web      — nginx serving the Vue SPA + proxying /v1 to api
-#   postgres — dedicated Postgres, TLS 1.3-only (see deploy)
+#   postgres — dedicated Postgres (internal network only)
+#   api      — Hono REST API + collector (Node 22), connects as `llmquota_app`
+#              (non-superuser) so FORCE RLS tenant isolation is enforced
+#   web      — nginx serving the Vue SPA (published on loopback only)
+#   edge     — OPTIONAL (profile "edge"): TLS 1.3 + HTTP/3 + rate limiting
+#
+# Profiles:
+#   --profile edge  adds the TLS edge (443/80, certs from ./certs)
+#   --profile ops   publishes Postgres on 127.0.0.1 only, for migrate/seed
 #
 # Secrets are supplied via env (docker/.env or the shell); never committed.
 
@@ -18,8 +24,13 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-llmquota}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-llm_quota}
+      # App role password (non-superuser pool identity; set by init script).
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Idempotent first-boot provisioning: creates llmquota_app with the
+      # env-provided password (runs only on an empty data volume).
+      - ./pg/init-prod.sh:/docker-entrypoint-initdb.d/10-init-app-role.sh:ro,z
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmquota} -d ${POSTGRES_DB:-llm_quota}"]
       interval: 5s
@@ -35,14 +46,14 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: 3000
-      DATABASE_URL: postgres://${POSTGRES_USER:-llmquota}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-llm_quota}
+      # Non-superuser pool identity: FORCE RLS applies (tenant isolation).
+      DATABASE_URL: postgres://llmquota_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-llm_quota}
       LLM_QUOTA_KEK: ${LLM_QUOTA_KEK:?set LLM_QUOTA_KEK (base64 32 bytes)}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (>=32 chars)}
       WEB_ORIGIN: ${WEB_ORIGIN:-https://localhost}
-      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
-      OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL:-}
+      COLLECT_INTERVAL_MS: ${COLLECT_INTERVAL_MS:-60000}
+      PG_MAX_CONNECTIONS: ${PG_MAX_CONNECTIONS:-10}
+      ENABLE_DEV_SESSION: ${ENABLE_DEV_SESSION:-}
       TLS_CERT_PATH: ${TLS_CERT_PATH:-}
       TLS_KEY_PATH: ${TLS_KEY_PATH:-}
     depends_on:
@@ -57,10 +68,42 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-https://localhost}
     restart: unless-stopped
+    # Loopback only: browsers must reach the SPA through the TLS edge (or an
+    # external ingress). Use --profile edge for the bundled nginx TLS edge.
     ports:
-      - "${WEB_HTTP_PORT:-8080}:80"
+      - "127.0.0.1:${WEB_HTTP_PORT:-8080}:80"
     depends_on:
       - api
+    networks: [internal]
+
+  edge:
+    image: nginx:1.27-alpine
+    profiles: ["edge"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./nginx/edge.conf:/etc/nginx/nginx.conf:ro,z
+      - ../certs:/etc/llm-quota/tls:ro,z
+    depends_on:
+      - api
+      - web
+    networks: [internal]
+
+  # Admin/ops access to Postgres (migrate, seed, backup checks) from the host.
+  # Loopback only; never expose this beyond 127.0.0.1.
+  postgres-ops-port:
+    image: alpine:3.20
+    profiles: ["ops"]
+    restart: unless-stopped
+    command: ["socat", "TCP-LISTEN:5432,fork,reuseaddr", "TCP:postgres:5432"]
+    ports:
+      - "127.0.0.1:${POSTGRES_OPS_PORT:-15432}:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks: [internal]
 
 volumes:

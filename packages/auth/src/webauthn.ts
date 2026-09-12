@@ -74,27 +74,58 @@ export interface VerifyResult {
   authenticatorCounter: number;
 }
 
+/** Server-held expectations bound to the issued challenge (must be enforced). */
+export interface WebAuthnExpectations {
+  /** The challenge the server issued for this ceremony (stored with a TTL). */
+  expectedChallenge: string;
+  /** Exact origin allow-list (e.g. ["https://app.example.com"]). */
+  expectedOrigins: string[];
+  /** The relying-party id (effective domain, e.g. "example.com"). */
+  expectedRpId: string;
+  /** Require user-present (UP) flag; default true. */
+  requireUserPresent?: boolean;
+  /** Require user-verified (UV) flag; default false. */
+  requireUserVerified?: boolean;
+}
+
 /**
- * Verify a WebAuthn assertion:
+ * Verify a WebAuthn assertion end-to-end:
  *  - decodes + parses clientData (must be `webauthn.get`)
+ *  - enforces the server-held `expectations`: challenge match, origin
+ *    allow-list and the rpIdHash embedded in authenticatorData
  *  - verifies the ECDSA/P-256 signature over `authenticatorData || hash(clientData)`
- *  - reads the authenticator counter so the caller can enforce monotonicity.
- *
- * Challenge, origin and rpId MUST be enforced by the caller by comparing
- * `result.clientData` against the stored challenge and an allow-list.
+ *  - enforces the UP/UV flags and returns the authenticator counter so the
+ *    caller can enforce monotonicity against the stored credential.
  */
 export async function verifyWebAuthnAssertion(
   credential: WebAuthnCredential,
   assertion: WebAuthnAssertion,
+  expectations: WebAuthnExpectations,
 ): Promise<VerifyResult> {
+  const fail = (clientData: ParsedClientData): VerifyResult => ({
+    verified: false,
+    clientData,
+    authenticatorCounter: -1,
+  });
   const clientData = parseClientData(assertion.clientDataJson);
-  if (clientData.type !== "webauthn.get") {
-    return { verified: false, clientData, authenticatorCounter: -1 };
+  if (clientData.type !== "webauthn.get") return fail(clientData);
+  if (clientData.challenge !== expectations.expectedChallenge) return fail(clientData);
+  if (!expectations.expectedOrigins.includes(clientData.origin)) return fail(clientData);
+
+  const authData = Buffer.from(assertion.authenticatorData, "base64url");
+  // rpIdHash = SHA-256(relying party id), bytes 0..31 of authenticator data.
+  const rpIdHash = createHash("sha256").update(expectations.expectedRpId).digest();
+  if (authData.length < 37 || !authData.subarray(0, 32).equals(rpIdHash)) {
+    return fail(clientData);
   }
+  const flags = authData[32]!;
+  const upPresent = (flags & 0x01) !== 0; // UP
+  const uvVerified = (flags & 0x04) !== 0; // UV
+  if (!upPresent && expectations.requireUserPresent !== false) return fail(clientData);
+  if (expectations.requireUserVerified && !uvVerified) return fail(clientData);
 
   const key = await importPublicKey(credential.publicKey, credential.algorithm);
   const clientDataHash = hashClientDataJson(assertion.clientDataJson);
-  const authData = Buffer.from(assertion.authenticatorData, "base64url");
   const signedData = Buffer.concat([authData, clientDataHash]);
 
   const signature = Buffer.from(assertion.signature, "base64url");

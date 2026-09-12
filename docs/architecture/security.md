@@ -1,62 +1,102 @@
 # Security design
 
-Status: design — implementation lands in [Phase 4](architecture/implementation-plan.md).
+Status: **implemented** (Phases 4–8 plus the production-wiring hardening pass —
+see [ADR-009](adr/ADR-009-security-layer-envelope-auth.md) and
+[ADR-012](adr/ADR-012-production-runtime-wiring-and-hardening.md)). Items that
+are documented but **not** implemented are called out explicitly; do not assume
+them.
 
-## Transport security (TLS 1.3 + HTTP/3)
+## Session & token model (current reality)
 
-- **Edge (browser ↔ web/api)**: TLS 1.3 mandatory; HTTP/2 + HTTP/3 (QUIC)
-  supported, HTTP/3 preferential with automatic `h2 → h1.1` fallback. TLS 1.2
-  deprecated after a transition window. See
-  [ADR-008](adr/ADR-008-rest-api-tls-quic-query.md) and
-  [api-conventions](api-conventions.md).
-- **Internal DB (api ↔ postgres)**: Postgres TLS 1.3-only
-  (`ssl_min_protocol_version = TLSv1.3`) over its native wire protocol; no
-  HTTP/3. Client uses `sslmode=verify-full` + `sslrootcert`.
-- **Cipher suites (TLS 1.3, AEAD-only)**: `TLS_AES_256_GCM_SHA384`,
-  `TLS_AES_128_GCM_SHA256`, `TLS_CHACHA20_POLY1305_SHA256`.
-- **QUERY method**: safe + idempotent body-based reads use QUERY (RFC 10008)
-  under OpenAPI 3.2, reducing the CSRF surface vs POST-for-read. The SPA uses a
-  GET alias; the ingress must allow QUERY. See [api-conventions](api-conventions.md).
-- **Certificates**: production uses real-CA certificates with ACME renewal;
-  local testing uses a git-ignored self-signed cert (`scripts/cert-local.sh`),
-  refused in `NODE_ENV=production`.
+- Sessions are **opaque 256-bit random tokens** presented as
+  `Authorization: Bearer <token>`. The DB stores only the SHA-256 hash
+  (`user_sessions.token_hash`) — the plaintext token is unrecoverable from a
+  database read.
+- **Signature**: each session also stores an HMAC-SHA256 signature
+  (`user_sessions.signature`, migration `0002`) computed over `SESSION_SECRET`.
+  The auth middleware verifies it **on every request** when `SESSION_SECRET`
+  is set — a leaked hash table alone cannot mint valid sessions
+  (defense-in-depth per ADR-009).
+- **Client storage**: the SPA keeps the bearer token in **`localStorage`**.
+  This is an accepted, documented trade-off: it exposes the token to any XSS
+  in the SPA, mitigated by the edge CSP (`default-src 'self'`, no third-party
+  script origins) and the short dev-session cap (≤ 24 h). There are **no
+  HttpOnly cookies today**; earlier documents claiming HttpOnly/Secure cookies
+  were wrong.
+- Revocation: `DELETE /v1/sessions/:id` (owner-scoped); expired/revoked
+  sessions fail the principal resolution → `401`.
+
+## Dev-only authentication endpoints (fail-closed)
+
+- `POST /auth/issue-session`, `GET /auth/oidc/authorize`,
+  `GET /auth/mfa/totp/challenge`, `GET /auth/mfa/webauthn/challenge` are
+  **development/testing scaffolding**.
+- Gate is fail-closed: they respond `403 problem+json` unless **both**
+  `ENABLE_DEV_SESSION=1` **and** `NODE_ENV` ≠ production. The production
+  compose leaves `ENABLE_DEV_SESSION` empty, so the shipped topology cannot
+  serve them even if misconfigured.
+- `issue-session` caps lifetime at 24 h and requires a valid `SESSION_SECRET`
+  (≥ 32 chars) — no hardcoded fallback.
+
+**Known limitation (unimplemented):** there is **no production authentication
+path yet**. OIDC **id_token validation**, server-side **state/PKCE-verifier
+persistence**, and the **MFA verify/enrollment endpoints** are specified in
+[ADR-009](adr/ADR-009-security-layer-envelope-auth.md) but not implemented;
+`OIDC_*` env vars are reserved placeholders. The primitives (PKCE pair
+generation, OIDC client, TOTP, WebAuthn assertion verification) exist in
+`packages/auth` and are unit-tested; only the endpoint wiring is missing.
+
+## Transport security
+
+| Link                  | Policy                                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------------- |
+| Browser ↔ edge        | TLS **1.3-only** (`ssl_protocols TLSv1.3`, AEAD ciphers), HTTP/3 (QUIC) preferential via the `edge` profile, automatic `h2 → h1.1` fallback. Headers: HSTS `max-age=63072000; includeSubDomains`, CSP `default-src 'self'`, `X-Content-Type-Options`, `X-Frame-Options: DENY`. |
+| Browser ↔ api (direct)| When `TLS_CERT_PATH`/`TLS_KEY_PATH` are set, the Node listener itself is **TLS 1.3-only** and adds HSTS. Local test certs only (`scripts/cert-local.sh`); `local.*` certs are refused in `NODE_ENV=production`. |
+| api ↔ postgres        | Internal compose network. The shipped `DATABASE_URL` sets no TLS parameters; enforcing the `sslmode=verify-full` + TLS 1.3 posture on this hop is a **hardening backlog item**, not wired today. |
+
+See [ADR-008](adr/ADR-008-rest-api-tls-quic-query.md) and
+[api-conventions](api-conventions.md) for the transport contract details.
+
+## CORS
+
+- Exact **origin allow-list**: `WEB_ORIGIN` plus the dev ports
+  `localhost:5173` / `localhost:4173`. Non-listed origins get no CORS grant.
+- `OPTIONS` **preflight is answered**, and **QUERY is in the allow-methods** —
+  browsers cannot emit `QUERY` (RFC 10008) without a successful preflight,
+  so the history read works from the SPA while `GET` remains the alias.
+
+## Rate limiting & input limits
+
+- **App layer**: per-IP limiter on `/auth/*` — **30 requests/minute**, in-process
+  (per API instance; horizontal scaling multiplies the budget).
+- **Edge** (`--profile edge`): nginx `limit_req` **10 r/m** (burst 20) per IP on
+  `/auth/` — the global backstop.
+- **Body cap**: **64 KB** request bodies; larger payloads are rejected before
+  reaching handlers.
+- `QUERY` (safe + idempotent, RFC 10008) is used for body-based reads, keeping
+  the read surface out of the CSRF-relevant mutation verbs.
 
 ## Envelope encryption (secrets at rest)
 
-All secrets — API keys and OAuth refresh tokens — are encrypted at rest:
+All connection secrets are encrypted at rest:
 
 - A fresh random **DEK** (data encryption key, 32 bytes) is generated per secret value.
 - The payload is encrypted with **AES-256-GCM** (authenticated).
-- The DEK is wrapped by a **KEK** (key-encryption key) taken from environment or
-  a KMS; the KEK is **never** stored in the database.
-- The DB stores only the versioned ciphertext payload.
+- The DEK is wrapped by a **KEK** (key-encryption key) from `LLM_QUOTA_KEK`
+  (base64, 32 bytes); the KEK is **never** stored in the database.
 
-**Concrete format (v1, `node:crypto` AEAD per ADR-005 Q5, implemented in
-`packages/core/src/crypto.ts`):**
+Concrete format (v1, `node:crypto` AEAD per ADR-005 Q5, implemented in
+`packages/core/src/crypto.ts`):
 `v1.<secretNonce>.<secretAuthTag>.<secretCiphertext>.<wrapNonce>.<wrappedDek>`
-(all base64). `encryptSecret(value, KEK)` / `decryptSecret(payload, KEK)` handle
-the full round-trip; secrets and keys are **never logged**. The KEK is read from
-`LLM_QUOTA_KEK` (base64, 32 bytes) via `parseKekFromEnv`.
+(all base64). `encryptSecret` / `decryptSecret` handle the round-trip; unknown
+versions / malformed payloads fail safely; secrets and keys are **never
+logged**. Key-rotation procedure (concept) is in the
+[runbook](../runbook.md#6-kek-rotation-envelope-encryption-concept).
 
-OAuth **access** tokens are kept in memory/encrypted cache; only **refresh**
-tokens persist (encrypted) in the DB. The `connections.secret_cipher` column is
-sealed via envelope encryption by `PostgresConnectionStore` (Phase 4).
-
-## Authentication & MFA
-
-- **OIDC-standard** identity abstraction (local + future Google/GitHub/Discord/SSO).
-- **TOTP** and **WebAuthn** (passkeys / security keys) as second factors;
-  WebAuthn credentials are managed by the user's authenticator/password manager
-  (e.g. Bitwarden). Implemented in `packages/auth` (Phase 4): RFC 6238 TOTP with
-  `otpauth://` URI builder, WebAuthn assertion verification (ECDSA/P-256 COSE -7)
-  with counter read-out, OIDC auth-code + PKCE (S256) + `state` + pinned
-  `redirect_uri`, opaque session tokens with SHA-256 at rest.
-- Sessions use **HttpOnly / SameSite** secure cookies or equivalent secure
-  token transport. `SESSION_SECRET` signs the server session.
-- OIDC flows validate `state`, use **PKCE**, and pin the `redirect_uri`.
-
-> **MFA/WebAuthn note:** Phase 4 implements the crypto primitives; full
-> enrollment/attestation UI and step-up challenge flows are wired in Phase 6.
+**DTO discipline**: `GET /v1/connections` returns a safe projection
+(`id`, `providerKey`, `label`, `connectionType`, `status`, `createdAt`) —
+`secretCipher` is **never** serialized, and the plaintext secret submitted at
+connection creation is never echoed.
 
 ## RBAC & object-level security
 
@@ -65,8 +105,9 @@ Profiles: `user`, `supervisor`, `admin`.
 - `admin` — everything a user can do, plus user management and identity-provider
   administration.
 - `supervisor` — manages **own** providers/connections **and has a read-only
-  view** of other users' spend/quota (no modification of third-party data).
-- `user` — connects providers and views own quotas/history.
+  view** of other users' spend/quota (`GET /v1/quotas/summary` requires
+  supervisor+; month-to-date totals by currency).
+- `user` — connects providers and views own quotas/history/sessions.
 
 Access control is enforced server-side at the object level (OWASP BOLA / IDOR
 mitigation), not just by route. RBAC helpers live in `packages/auth/src/rbac.ts`
@@ -74,22 +115,50 @@ mitigation), not just by route. RBAC helpers live in `packages/auth/src/rbac.ts`
 
 ## Row-Level Security (tenant isolation)
 
-Applied in Phase 2/3 via versioned migrations (`packages/db/drizzle/0001_*.sql`
-with `GRANT`/`ALTER DEFAULT PRIVILEGES` and `FORCE ROW LEVEL SECURITY`). Tenant
-tables (users, connections, quota_sessions, quota_snapshots, spending_aggregates,
-user_sessions, totp_secrets, webauthn_credentials) are RLS-enabled, FORCE-locked
-and restricted to the owning `user_id`. The app role (`llmquota_app`) connects
-the pool; the auth middleware (Phase 4/5) sets `app.user_id`,
-`app.is_admin` and `app.is_supervisor_admin` via `SET LOCAL` inside each managed
-transaction, so policies scope reads/writes per tenant and preserve the
-supervisor/admin read paths. Reference/shared data (quota_providers,
-identity_providers, fx_rates) is not
+Tenant tables (users, connections, quota_sessions, quota_snapshots,
+spending_aggregates, user_sessions, totp_secrets, webauthn_credentials) are
+RLS-enabled and `FORCE`-locked. Two mechanics make it real in the shipped
+topology:
+
+1. **Non-superuser pool** — the API connects as `llmquota_app`
+   (provisioned by `docker/pg/init-prod.sh`; migration `0001` creates the role
+   **without** a password, provisioning sets it). The cluster superuser would
+   bypass RLS entirely and is reserved for migrations/seed.
+2. **Per-request GUCs** — the auth middleware wraps data access in
+   `withRlsContext`, issuing `SET LOCAL app.user_id`,
+   `app.is_admin`, `app.is_supervisor_admin` inside each transaction so
+   policies scope reads/writes per tenant while preserving supervisor/admin
+   read paths.
+
+**Collector policy** (migration `0002`): the in-process collector enumerates
+connections cross-tenant by setting `app.is_collector = 'true'` — dedicated
+policies grant it the narrow `SELECT`/`DELETE` surface it needs — and then
+performs its snapshot/aggregate **writes per owner** under a normal per-user
+RLS context, so a collector bug cannot write across tenants.
+
+Reference/shared data (quota_providers, identity_providers, fx_rates) is not
 tenant-scoped by design.
+
+## Threat-model deltas & known limitations
+
+| Item | Status |
+| ---- | ------ |
+| Bearer token in `localStorage` | Accepted trade-off (XSS surface); mitigated by edge CSP; no HttpOnly cookies today. |
+| Production login path | **Missing** — OIDC id_token validation, server-side state/verifier persistence, MFA verify endpoints not implemented; only fail-closed dev endpoints exist. |
+| api ↔ postgres TLS | Not enforced in the shipped compose (internal network only); backlog. |
+| In-process rate limiter | Per-instance budget; edge `limit_req` is the global control. |
+| Secrets at rest | Implemented (envelope v1); KEK rotation is a manual procedure, no tooling. |
+| Edge rate limit | Implemented via `--profile edge`; without the profile only the app-layer limiter applies. |
 
 ## Testing/verification
 
-- TOTP/WebAuthn flows covered by automated tests.
-- Secret-leakage oriented tests (keys never in plaintext at rest and never
-  logged).
-- Aligned to OWASP ASVS Level 2; security review in Phase 4.
-- RLS policies verified with a dedicated app role (isolated tenant rows).
+- TOTP/WebAuthn/OIDC/session primitives covered by unit tests; secret-leakage
+  tests (plaintext never at rest, never on the wire, never logged).
+- Integration (22 tests): RLS tenant isolation under `llmquota_app`
+  (negative cases), envelope round-trip (wrong KEK throws), BOLA across users,
+  supervisor RBAC (403 vs 200), session hygiene (expired/revoked → 401).
+- Wire-level API tests: CORS single-origin + evil-origin rejection, 401
+  without/with bad token, QUERY + GET alias parity, no stack traces in
+  `problem()`.
+- Aligned to OWASP ASVS Level 2. See
+  [testing.md](testing.md) for the full matrix.

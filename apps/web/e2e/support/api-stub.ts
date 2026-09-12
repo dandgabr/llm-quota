@@ -88,7 +88,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS,QUERY",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, x-secret",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
   });
   res.end(JSON.stringify(body));
 }
@@ -111,7 +111,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS,QUERY",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, x-secret",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
       "Access-Control-Max-Age": "86400",
     });
     return res.end();
@@ -141,8 +141,12 @@ const server = createServer(async (req, res) => {
     if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
     if (req.method === "POST") {
       const body = await readBody(req);
-      const parsed = JSON.parse(body || "{}") as { providerId?: string; label?: string };
-      if (!req.headers["x-secret"] || !parsed.providerId) {
+      const parsed = JSON.parse(body || "{}") as {
+        providerId?: string;
+        label?: string;
+        secret?: string;
+      };
+      if (!parsed.secret || !parsed.providerId) {
         return json(res, 400, { title: "Bad Request", status: 400 });
       }
       const conn: Connection = {

@@ -52,7 +52,8 @@ export class PostgresHistoryStore implements HistoryStore {
       });
   }
 
-  /** List aggregates for a user within a granularity and ISO window range. */
+  /** List aggregates for a user within a granularity and ISO window range.
+   *  Empty `from`/`to` mean "no bound" on that side (full retained window). */
   async listByUser(
     userId: string,
     granularity: Granularity,
@@ -66,8 +67,8 @@ export class PostgresHistoryStore implements HistoryStore {
         and(
           eq(spendingAggregates.userId, userId),
           eq(spendingAggregates.granularity, granularity),
-          gte(spendingAggregates.window, from),
-          lte(spendingAggregates.window, to),
+          from ? gte(spendingAggregates.window, from) : undefined,
+          to ? lte(spendingAggregates.window, to) : undefined,
         ),
       )
       .orderBy(asc(spendingAggregates.window));
@@ -100,5 +101,32 @@ export class PostgresHistoryStore implements HistoryStore {
       .where(lt(quotaSnapshots.readAt, new Date(before)))
       .returning({ id: quotaSnapshots.id });
     return result.length;
+  }
+
+  /**
+   * Sum spending aggregates by currency from a window key onwards (inclusive).
+   * Intended for the supervisor summary: call inside a withRlsContext
+   * transaction so the supervisor-read policy scopes the rows.
+   */
+  async sumByCurrencySince(
+    granularity: Granularity,
+    windowFrom: string,
+    opts: { db?: DB } = {},
+  ): Promise<{ currency: string; total: number }[]> {
+    const handle = opts.db ?? this.db;
+    const rows = await handle
+      .select({
+        currency: spendingAggregates.currency,
+        total: sql<string>`sum(${spendingAggregates.spentAmount})`,
+      })
+      .from(spendingAggregates)
+      .where(
+        and(
+          eq(spendingAggregates.granularity, granularity),
+          gte(spendingAggregates.window, windowFrom),
+        ),
+      )
+      .groupBy(spendingAggregates.currency);
+    return rows.map((r) => ({ currency: r.currency, total: toNumber(r.total) }));
   }
 }

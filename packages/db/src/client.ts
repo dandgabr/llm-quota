@@ -31,6 +31,11 @@ export function createDb(options: DbOptions): DbHandle {
     connectionString: options.url,
     max: options.maxConnections ?? 10,
   });
+  // An idle backend disconnect emits a pool-wide 'error'; without a listener
+  // Node turns it into an uncaught exception that kills the API process.
+  pool.on("error", (err) => {
+    console.error("[llm-quota:db] idle client error", err.message);
+  });
   const db = drizzle(pool, { schema });
   return {
     db,

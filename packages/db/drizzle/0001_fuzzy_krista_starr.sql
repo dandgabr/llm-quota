@@ -12,10 +12,13 @@
 -- ============================================================================
 
 -- ---- App role (idempotent) ----
+-- NOTE: the role is created WITHOUT a password here; provisioning sets it via
+-- `ALTER ROLE llmquota_app PASSWORD ...` from a secret (docker/pg/init-prod.sh
+-- for compose, docker/pg/init.sql for tests). Never commit a role password.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'llmquota_app') THEN
-    CREATE ROLE llmquota_app LOGIN PASSWORD 'change-me-in-prod';
+    CREATE ROLE llmquota_app LOGIN;
   END IF;
 END $$;
 

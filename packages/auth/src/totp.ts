@@ -114,12 +114,24 @@ export function generateTotp(secretBase64Url: string, opts: TotpOptions = {}): s
   return hotp(secretBase64Url, counter, o);
 }
 
-/** Verify a TOTP token with a ±window drift tolerance (default ±1 step). */
-export function verifyTotp(
+/** Result of a step-aware TOTP verification (for replay tracking). */
+export interface TotpVerifyResult {
+  valid: boolean;
+  /** The matched counter step when valid (persist to reject replays). */
+  step?: number;
+}
+
+/**
+ * Step-aware TOTP verification with ±window drift tolerance. When
+ * `lastUsedStep` is provided, steps at or before it are rejected, so a code
+ * cannot be replayed inside (or after) its drift window. The caller must
+ * persist the returned `step` and pass it back on the next verify.
+ */
+export function verifyTotpWithStep(
   secretBase64Url: string,
   token: string,
-  opts: TotpOptions & { window?: number } = {},
-): boolean {
+  opts: TotpOptions & { window?: number; lastUsedStep?: number } = {},
+): TotpVerifyResult {
   const o: Required<Omit<TotpOptions, "nowMs">> = {
     digits: opts.digits ?? TOTP_DEFAULTS.digits,
     period: opts.period ?? TOTP_DEFAULTS.period,
@@ -128,10 +140,25 @@ export function verifyTotp(
   const window = opts.window ?? 1;
   const nowMs = opts.nowMs?.() ?? Date.now();
   const current = Math.floor(nowMs / 1000 / o.period);
-  for (let d = -window; d <= window; d += 1) {
-    if (constantTimeEquals(hotp(secretBase64Url, current + d, o), token)) return true;
+  for (let d = window; d >= -window; d -= 1) {
+    // Highest matching step wins, so replays of older codes never verify
+    // after a newer one was consumed.
+    const step = current + d;
+    if (opts.lastUsedStep !== undefined && step <= opts.lastUsedStep) break;
+    if (constantTimeEquals(hotp(secretBase64Url, step, o), token)) {
+      return { valid: true, step };
+    }
   }
-  return false;
+  return { valid: false };
+}
+
+/** Verify a TOTP token with a ±window drift tolerance (default ±1 step). */
+export function verifyTotp(
+  secretBase64Url: string,
+  token: string,
+  opts: TotpOptions & { window?: number } = {},
+): boolean {
+  return verifyTotpWithStep(secretBase64Url, token, opts).valid;
 }
 
 /** Constant-time string comparison to avoid timing side-channels. */

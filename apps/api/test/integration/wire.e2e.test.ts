@@ -3,9 +3,12 @@
  * @hono/node-server) against the real test Postgres and asserts the ADR-008
  * contract — including the QUERY method (RFC 10008) over an actual socket.
  *
- * DB handle: the superuser pool, mirroring the current compose deployment
- * (postgres://llmquota@…). RLS-truthful app-role behavior is proven at the
- * repository level (packages/db/test/integration/rls.integration.test.ts).
+ * Final-review additions: origin-allow-listed CORS + preflight, safe DTOs
+ * (never the secret cipher), real quota reads, QUERY body parsing, and the
+ * fail-closed ENABLE_DEV_SESSION gate.
+ *
+ * DB handle: the superuser pool for seeding; app-role RLS behavior is proven
+ * at the repository level (packages/db/test/integration/rls.integration.test.ts).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -19,7 +22,7 @@ import {
 } from "../../../../packages/db/test/helpers/db.js";
 import type { TestDb } from "../../../../packages/db/test/helpers/db.js";
 import { hashToken } from "@llm-quota/auth";
-import { createSession } from "@llm-quota/db";
+import { createSession, PostgresQuotaStore } from "@llm-quota/db";
 
 let t: TestDb;
 let serverApp: Started;
@@ -29,8 +32,9 @@ let providerId: string;
 let aliceToken: string;
 
 beforeAll(async () => {
-  // The issue-session gate requires a strong secret outside production.
+  // The dev-session gate now fails closed: opt in explicitly (non-production).
   process.env.SESSION_SECRET = "s".repeat(32);
+  process.env.ENABLE_DEV_SESSION = "1";
   t = await setupTestDb({ migrate: true });
   await resetDatabase(t.super);
   aliceId = await seedUser(t.super, { role: "user", email: "wire@test.local" });
@@ -62,9 +66,11 @@ beforeAll(async () => {
 afterAll(async () => {
   await serverApp.close();
   await t.close();
+  delete process.env.ENABLE_DEV_SESSION;
 });
 
 const auth = () => ({ Authorization: `Bearer ${aliceToken}` });
+const ORIGIN = "http://localhost:5173";
 
 describe("API E2E over the wire (real server + real Postgres)", () => {
   it("GET /health is public and returns ok", async () => {
@@ -73,10 +79,23 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
     expect(await res.json()).toMatchObject({ ok: true });
   });
 
-  it("CORS header is set to the configured web origin", async () => {
-    const res = await fetch(`${base}/health`);
-    expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
-    expect(res.headers.get("vary")).toContain("Origin");
+  it("CORS echoes ONLY allow-listed origins and answers preflights", async () => {
+    const allowed = await fetch(`${base}/health`, { headers: { Origin: ORIGIN } });
+    expect(allowed.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    expect(allowed.headers.get("vary")).toContain("Origin");
+
+    const foreign = await fetch(`${base}/health`, {
+      headers: { Origin: "https://evil.example" },
+    });
+    expect(foreign.headers.get("access-control-allow-origin")).toBeNull();
+
+    const pre = await fetch(`${base}/v1/quotas`, {
+      method: "OPTIONS",
+      headers: { Origin: ORIGIN, "Access-Control-Request-Method": "QUERY" },
+    });
+    expect(pre.status).toBe(204);
+    expect(pre.headers.get("access-control-allow-methods")).toContain("QUERY");
+    expect(pre.headers.get("access-control-allow-headers")).toContain("Authorization");
   });
 
   it("rejects protected endpoints without a bearer token (401 problem+json)", async () => {
@@ -87,40 +106,69 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
     expect(body.status).toBe(401);
   });
 
-  it("GET /v1/quotas with a valid token returns 200 data", async () => {
+  it("GET /v1/quotas returns the latest persisted quota view (no secrets)", async () => {
+    // Seed a connection + snapshot directly (superuser), then read via API.
+    const secret = "sk-quotas-secret-1";
+    const createRes = await fetch(`${base}/v1/connections`, {
+      method: "POST",
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId, label: "quota-conn", connectionType: "api", secret }),
+    });
+    expect(createRes.status).toBe(201);
+    const connView = (await createRes.json()) as { id: string; providerKey: string };
+    expect(connView.providerKey).toBe("ollama-claude/api");
+    expect(JSON.stringify(connView)).not.toContain(secret);
+
+    const quotaStore = new PostgresQuotaStore(t.super.db);
+    await quotaStore.insertSnapshot({
+      connectionId: connView.id,
+      kind: "percent",
+      window: "daily",
+      usedPercent: 72,
+      remainingPercent: 28,
+    });
+
     const res = await fetch(`${base}/v1/quotas`, { headers: auth() });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: unknown[] };
-    expect(Array.isArray(body.data)).toBe(true);
+    const body = (await res.json()) as { data: { connectionId: string; usedPercent: number }[] };
+    const view = body.data.find((q) => q.connectionId === connView.id);
+    expect(view?.usedPercent).toBe(72);
   });
 
-  it("POST /v1/connections stores a sealed secret and never echoes plaintext; then lists it", async () => {
+  it("POST /v1/connections seals the secret and NEVER echoes ciphertext; lists safe DTOs", async () => {
     const secret = "sk-wire-secret-xyz";
     const res = await fetch(`${base}/v1/connections`, {
       method: "POST",
-      headers: { ...auth(), "Content-Type": "application/json", "x-secret": secret },
-      body: JSON.stringify({ providerId, label: "wire", connectionType: "api" }),
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId, label: "wire", connectionType: "api", secret }),
     });
     expect(res.status).toBe(201);
-    const row = (await res.json()) as { secretCipher: string };
-    expect(row.secretCipher).toMatch(/^v1\./);
-    expect(row.secretCipher).not.toContain(secret);
+    const row = (await res.json()) as { label: string; secretCipher?: string };
+    expect(row.label).toBe("wire");
+    expect(row.secretCipher).toBeUndefined();
 
-    // Real read back (P0-2 fix): the list endpoint returns the created row.
     const list = await fetch(`${base}/v1/connections`, { headers: auth() });
     expect(list.status).toBe(200);
-    const body = (await list.json()) as { data: { label: string; secretCipher: string }[] };
+    const body = (await list.json()) as { data: { label: string; providerKey: string }[] };
     expect(body.data.some((c) => c.label === "wire")).toBe(true);
     expect(body.data.every((c) => !JSON.stringify(c).includes(secret))).toBe(true);
+    expect(JSON.stringify(body).toLowerCase()).not.toContain("secretcipher");
   });
 
-  it("POST /v1/connections without x-secret returns 400", async () => {
-    const res = await fetch(`${base}/v1/connections`, {
+  it("POST /v1/connections without a secret (or with a malformed body) returns 400", async () => {
+    const noSecret = await fetch(`${base}/v1/connections`, {
       method: "POST",
       headers: { ...auth(), "Content-Type": "application/json" },
       body: JSON.stringify({ providerId, label: "no-secret", connectionType: "api" }),
     });
-    expect(res.status).toBe(400);
+    expect(noSecret.status).toBe(400);
+
+    const malformed = await fetch(`${base}/v1/connections`, {
+      method: "POST",
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: "not-json{",
+    });
+    expect(malformed.status).toBe(400);
   });
 
   it("GET /v1/quotas/summary denies a plain user (403)", async () => {
@@ -128,20 +176,37 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
     expect(res.status).toBe(403);
   });
 
-  it("GET /v1/history (SPA alias) returns 200", async () => {
-    const res = await fetch(`${base}/v1/history?from=daily:2026-01-01&to=daily:2026-12-31`, {
-      headers: auth(),
-    });
+  it("GET /v1/history (SPA alias) defaults to the full retained window", async () => {
+    const res = await fetch(`${base}/v1/history`, { headers: auth() });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: unknown[] };
     expect(Array.isArray(body.data)).toBe(true);
+  });
+
+  it("GET /v1/history with ISO from/to bounds returns 200", async () => {
+    const res = await fetch(
+      `${base}/v1/history?from=2026-01-01T00:00:00.000Z&to=2026-12-31T00:00:00.000Z&granularity=daily`,
+      { headers: auth() },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: unknown[] };
+    expect(Array.isArray(body.data)).toBe(true);
+  });
+
+  it("GET /v1/history rejects an unknown granularity (400)", async () => {
+    const res = await fetch(`${base}/v1/history?granularity=yearly`, { headers: auth() });
+    expect(res.status).toBe(400);
   });
 
   it("QUERY /v1/history (RFC 10008) works over the wire with a JSON body", async () => {
     const res = await fetch(`${base}/v1/history`, {
       method: "QUERY",
       headers: { ...auth(), "Content-Type": "application/json" },
-      body: JSON.stringify({ from: "daily:2026-01-01", to: "daily:2026-12-31", granularity: "daily" }),
+      body: JSON.stringify({
+        from: "2026-01-01T00:00:00.000Z",
+        to: "2026-12-31T00:00:00.000Z",
+        granularity: "daily",
+      }),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: unknown[] };
@@ -161,18 +226,36 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
     expect(del.status).toBe(404);
   });
 
-  it("POST /auth/issue-session is gated in production mode (403)", async () => {
-    // buildServer was created with env 'test'; simulate the prod gate by
-    // asserting the endpoint exists and validates input in test mode.
+  it("POST /auth/issue-session issues a working dev session when enabled", async () => {
+    process.env.ENABLE_DEV_SESSION = "1";
     const res = await fetch(`${base}/auth/issue-session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ userId: aliceId, expiresInSec: 120 }),
     });
-    expect(res.status).toBe(400); // missing userId
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { token: string; expiresAt: string };
+    expect(body.token).toBeTruthy();
+
+    // The minted (signed) token must authenticate.
+    const me = await fetch(`${base}/v1/quotas`, {
+      headers: { Authorization: `Bearer ${body.token}` },
+    });
+    expect(me.status).toBe(200);
   });
 
-  it("GET /auth/oidc/authorize never leaks the PKCE code_verifier", async () => {
+  it("POST /auth/issue-session fails closed when ENABLE_DEV_SESSION is unset", async () => {
+    delete process.env.ENABLE_DEV_SESSION;
+    const res = await fetch(`${base}/auth/issue-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: aliceId }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("GET /auth/oidc/authorize never leaks the PKCE code_verifier (dev-gated)", async () => {
+    process.env.ENABLE_DEV_SESSION = "1";
     const res = await fetch(`${base}/auth/oidc/authorize`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;

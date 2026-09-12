@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { webcrypto } from "node:crypto";
+import { webcrypto, createHash } from "node:crypto";
 import {
   exportPublicKeySpki,
   generateWebAuthnChallenge,
@@ -12,6 +12,14 @@ import {
 
 type CryptoKey = webcrypto.CryptoKey;
 type BufferSource = webcrypto.BufferSource;
+
+const RP_ID = "example.com";
+const ORIGIN = "https://app.example.com";
+const expectations = (challenge: string) => ({
+  expectedChallenge: challenge,
+  expectedOrigins: [ORIGIN],
+  expectedRpId: RP_ID,
+});
 
 /** Build a signed assertion for a credential using the Web Crypto API (ES256). */
 async function buildAssertion(
@@ -27,8 +35,8 @@ async function buildAssertion(
   };
   const clientDataJson = Buffer.from(JSON.stringify(clientData)).toString("base64url");
   const clientDataHash = hashClientDataJson(clientDataJson);
-  // RFC 8188-style authenticator data: 32-byte rpIdHash + flags + counter.
-  const rpIdHash = new Uint8Array(32).fill(7);
+  // RFC-ish authenticator data: 32-byte rpIdHash (SHA-256 of the RP id) + flags + counter.
+  const rpIdHash = createHash("sha256").update(RP_ID).digest();
   const flags = new Uint8Array(1).fill(1); // user-present
   const counter = Buffer.from([0, 0, 0, 1]); // 4 bytes
   const authenticatorData = Buffer.concat([
@@ -77,7 +85,7 @@ describe("WebAuthn", () => {
     );
     const challenge = generateWebAuthnChallenge();
     const credentialId = "cred-1";
-    const assertion = await buildAssertion(pair.privateKey as CryptoKey, credentialId, "https://app", challenge);
+    const assertion = await buildAssertion(pair.privateKey as CryptoKey, credentialId, ORIGIN, challenge);
     const publicKey = await exportPublicKeySpki(pair.publicKey as CryptoKey);
     const credential: WebAuthnCredential = {
       credentialId,
@@ -85,7 +93,41 @@ describe("WebAuthn", () => {
       algorithm: -7,
       counter: 1,
     };
-    expect((await verifyWebAuthnAssertion(credential, assertion)).verified).toBe(true);
+    expect((await verifyWebAuthnAssertion(credential, assertion, expectations(challenge))).verified).toBe(true);
+  });
+
+  it("rejects a replayed/wrong challenge and a foreign origin", async () => {
+    const pair = await webcrypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign", "verify"],
+    );
+    const challenge = generateWebAuthnChallenge();
+    const assertion = await buildAssertion(pair.privateKey as CryptoKey, "c", ORIGIN, challenge);
+    const credential: WebAuthnCredential = {
+      credentialId: "c",
+      publicKey: await exportPublicKeySpki(pair.publicKey as CryptoKey),
+      algorithm: -7,
+      counter: 1,
+    };
+    const wrongChallenge = await verifyWebAuthnAssertion(
+      credential,
+      assertion,
+      expectations("other-challenge"),
+    );
+    expect(wrongChallenge.verified).toBe(false);
+    const foreignOrigin = await verifyWebAuthnAssertion(credential, assertion, {
+      expectedChallenge: challenge,
+      expectedOrigins: ["https://other.example"],
+      expectedRpId: RP_ID,
+    });
+    expect(foreignOrigin.verified).toBe(false);
+    const wrongRpId = await verifyWebAuthnAssertion(credential, assertion, {
+      expectedChallenge: challenge,
+      expectedOrigins: [ORIGIN],
+      expectedRpId: "other.example",
+    });
+    expect(wrongRpId.verified).toBe(false);
   });
 
   it("rejects an assertion with the wrong type", async () => {
@@ -108,7 +150,7 @@ describe("WebAuthn", () => {
         JSON.stringify({ type: "webauthn.create", challenge: "ch", origin: "https://app" }),
       ).toString("base64url"),
     };
-    expect((await verifyWebAuthnAssertion(credential, bad)).verified).toBe(false);
+    expect((await verifyWebAuthnAssertion(credential, bad, expectations("ch"))).verified).toBe(false);
   });
 
   it("rejects an assertion signed with the wrong key", async () => {
@@ -123,6 +165,6 @@ describe("WebAuthn", () => {
       algorithm: -7,
       counter: 1,
     };
-    expect((await verifyWebAuthnAssertion(credential, assertion)).verified).toBe(false);
+    expect((await verifyWebAuthnAssertion(credential, assertion, expectations("ch"))).verified).toBe(false);
   });
 });

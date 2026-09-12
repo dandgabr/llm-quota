@@ -12,6 +12,10 @@
 
 set -euo pipefail
 
+# Backups contain tenant PII, session hashes and ciphertexts: never readable
+# beyond the owner (documents say: encrypt before moving offsite).
+umask 077
+
 ENGINE="${1:-}"
 if [[ -z "$ENGINE" ]]; then
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then

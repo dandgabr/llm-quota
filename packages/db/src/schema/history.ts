@@ -24,6 +24,8 @@ export const userSessions = pgTable("user_sessions", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+  /** HMAC-SHA256 of the raw token (defense-in-depth vs a leaked hash table). */
+  signature: varchar("signature", { length: 128 }),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   revoked: boolean("revoked").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

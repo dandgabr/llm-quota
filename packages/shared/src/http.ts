@@ -28,7 +28,12 @@ export interface HttpClient {
 /** The fetch-like function injected into `createFetchHttpClient`. */
 export type FetchFn = (
   url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string },
+  init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+  },
 ) => Promise<
   Omit<HttpResponse, "json" | "text"> & {
     json(): Promise<unknown>;
@@ -39,8 +44,19 @@ export type FetchFn = (
 /** Global fetch impl, read via `unknown` cast (ES2022 lib has no DOM fetch). */
 const defaultFetch = (globalThis as unknown as { fetch?: FetchFn }).fetch;
 
-/** Real `fetch`-backed HttpClient (Node >= 22 global fetch). */
-export const createFetchHttpClient = (fetchFn?: FetchFn): HttpClient => {
+/** Default per-request timeout (ms) so a hung provider never stalls a caller. */
+export const DEFAULT_HTTP_TIMEOUT_MS = 10_000;
+
+/** Real `fetch`-backed HttpClient (Node >= 22 global fetch).
+ *
+ * Every request carries an `AbortSignal.timeout` (default 10 s) so a hung
+ * upstream connection fails fast instead of stalling a collector pass or an
+ * OIDC round-trip for undici's default 300 s header window.
+ */
+export const createFetchHttpClient = (
+  fetchFn?: FetchFn,
+  timeoutMs: number = DEFAULT_HTTP_TIMEOUT_MS,
+): HttpClient => {
   const doFetch = fetchFn ?? defaultFetch!;
   const handle = async (res: Awaited<ReturnType<FetchFn>>): Promise<HttpResponse> => ({
     status: res.status,
@@ -50,12 +66,18 @@ export const createFetchHttpClient = (fetchFn?: FetchFn): HttpClient => {
   });
   return {
     async get(url, headers) {
-      return handle(await doFetch(url, { method: "GET", headers }));
+      return handle(await doFetch(url, { method: "GET", headers, signal: AbortSignal.timeout(timeoutMs) }));
     },
     async post(url, body, headers) {
-      const init: { method?: string; headers?: Record<string, string>; body?: string } = {
+      const init: {
+        method?: string;
+        headers?: Record<string, string>;
+        body?: string;
+        signal?: AbortSignal;
+      } = {
         method: "POST",
         headers,
+        signal: AbortSignal.timeout(timeoutMs),
       };
       if (body instanceof URLSearchParams) {
         init.body = body.toString();

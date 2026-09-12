@@ -9,6 +9,7 @@
  */
 
 import { reactive } from "vue";
+import { safeGetItem, safeSetItem } from "./storage";
 
 export type Theme = "light" | "dark";
 
@@ -16,7 +17,7 @@ const STORAGE_KEY = "llm-quota.theme";
 
 /** Resolve the initial theme: persisted choice > system preference > light. */
 export function resolveInitialTheme(): Theme {
-  const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
+  const stored = safeGetItem(STORAGE_KEY) as Theme | null;
   if (stored === "light" || stored === "dark") return stored;
   if (typeof window !== "undefined") {
     const sys = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
@@ -39,7 +40,7 @@ export function useTheme() {
   function toggle(next?: Theme) {
     const target = next ?? (ui.theme === "light" ? "dark" : "light");
     apply(target);
-    localStorage.setItem(STORAGE_KEY, target);
+    safeSetItem(STORAGE_KEY, target);
   }
 
   /** Apply the initial theme (called before mount to avoid FOUC). */

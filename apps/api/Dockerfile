@@ -10,7 +10,9 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/api/package.json apps/api/package.json
 COPY packages/ packages/
 RUN pnpm install --frozen-lockfile --offline || pnpm install --frozen-lockfile
-RUN pnpm --filter @llm-quota/api build
+# Full workspace build: the api imports @llm-quota/* whose runtime entrypoints
+# are their dist/ outputs — building only the api package breaks the image.
+RUN pnpm -r build
 
 # Runtime stage: minimal, non-root.
 FROM node:22-alpine AS runtime

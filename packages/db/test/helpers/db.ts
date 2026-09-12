@@ -68,6 +68,7 @@ export async function resetDatabase(superH: DbHandle): Promise<void> {
     TRUNCATE TABLE user_sessions, spending_aggregates, quota_snapshots, quota_sessions,
       connections, quota_providers, totp_secrets, webauthn_credentials,
       user_credentials, user_invites, idempotency_keys, instance_settings,
+      audit_events,
       users RESTART IDENTITY CASCADE
   `);
 }

@@ -62,6 +62,12 @@ function logout() {
         >
           {{ t("admin.users") }}
         </RouterLink>
+        <RouterLink
+          v-if="auth.isSupervisor"
+          to="/admin/audit"
+        >
+          {{ t("admin.audit") }}
+        </RouterLink>
       </nav>
       <span class="controls">
         <button class="btn-ghost" type="button" aria-label="Toggle color theme" @click="toggle()">

@@ -279,6 +279,28 @@ const server = createServer(async (req, res) => {
     return res.end();
   }
 
+  if (url.pathname === "/v1/audit") {
+    if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
+    if (role === "user") return json(res, 403, { title: "Forbidden", status: 403 });
+    return json(res, 200, {
+      data: [
+        {
+          id: "ev-1",
+          occurredAt: "2026-09-11T12:00:00Z",
+          actorUserId: "u-admin",
+          actorRole: "admin",
+          action: "user.role_changed",
+          targetType: "user",
+          targetId: "u-user",
+          metadata: { role: "supervisor" },
+          requestId: "req-1",
+        },
+      ],
+      has_more: false,
+      next_cursor: null,
+    });
+  }
+
   json(res, 404, { title: "Not Found", status: 404 });
 });
 

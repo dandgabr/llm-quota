@@ -56,7 +56,22 @@
   },
   "admin": {
     "users": "Usuários",
+    "audit": "Log de auditoria",
     "identityProviders": "Provedores de identidade"
+  },
+  "audit": {
+    "title": "Log de auditoria",
+    "subtitle": "Toda alteração relevante de segurança, quem fez e quando.",
+    "action": "Ação",
+    "actionPlaceholder": "ex.: user.deleted",
+    "targetType": "Tipo de alvo",
+    "targetPlaceholder": "ex.: connection",
+    "apply": "Filtrar",
+    "empty": "Nenhum evento de auditoria ainda.",
+    "details": "Detalhes",
+    "hideDetails": "Ocultar",
+    "loadMore": "Carregar mais",
+    "loadError": "Não foi possível carregar a auditoria."
   },
   "users": {
     "title": "Gerenciamento de usuários",

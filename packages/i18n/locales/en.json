@@ -56,7 +56,22 @@
   },
   "admin": {
     "users": "Users",
+    "audit": "Audit log",
     "identityProviders": "Identity providers"
+  },
+  "audit": {
+    "title": "Audit log",
+    "subtitle": "Every security-relevant change, who made it and when.",
+    "action": "Action",
+    "actionPlaceholder": "e.g. user.deleted",
+    "targetType": "Target type",
+    "targetPlaceholder": "e.g. connection",
+    "apply": "Filter",
+    "empty": "No audit events yet.",
+    "details": "Details",
+    "hideDetails": "Hide",
+    "loadMore": "Load more",
+    "loadError": "Could not load the audit trail."
   },
   "users": {
     "title": "User management",

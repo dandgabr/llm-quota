@@ -424,5 +424,21 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
       });
       expect(second.status).toBe(404);
     });
+
+    it("mutations are appended to the audit trail; supervisor+ can read it", async () => {
+      // Create an invite (mutation) and confirm the event is recorded.
+      await fetch(`${base}/v1/admin/invites`, {
+        method: "POST",
+        headers: { ...adminAuth(), "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "audited@test.local", role: "user" }),
+      });
+      const res = await fetch(`${base}/v1/audit?action=invite.created`, { headers: adminAuth() });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { data: { action: string; targetType: string }[] };
+      expect(body.data.some((e) => e.action === "invite.created")).toBe(true);
+      // A plain user cannot read the audit trail.
+      const denied = await fetch(`${base}/v1/audit`, { headers: auth() });
+      expect(denied.status).toBe(403);
+    });
   });
 });

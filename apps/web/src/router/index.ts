@@ -44,6 +44,12 @@ export const router = createRouter({
       meta: { requiresAdmin: true },
     },
     {
+      path: "/admin/audit",
+      name: "admin-audit",
+      component: () => import("../views/AuditView.vue"),
+      meta: { requiresSupervisor: true },
+    },
+    {
       path: "/:pathMatch(.*)*",
       redirect: "/",
     },
@@ -59,9 +65,10 @@ router.beforeEach((to) => {
     return true;
   }
   if (!token) return { name: "login" };
-  if (to.meta.requiresAdmin) {
-    const role = localStorage.getItem("llm-quota.role");
-    if (role !== "admin") return { name: "dashboard" };
+  const role = localStorage.getItem("llm-quota.role");
+  if (to.meta.requiresAdmin && role !== "admin") return { name: "dashboard" };
+  if (to.meta.requiresSupervisor && role !== "admin" && role !== "supervisor") {
+    return { name: "dashboard" };
   }
   return true;
 });

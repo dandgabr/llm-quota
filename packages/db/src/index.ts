@@ -14,4 +14,5 @@ export * from "./repositories/quotas.js";
 export * from "./repositories/users.js";
 export * from "./repositories/invites.js";
 export * from "./repositories/idempotency.js";
+export * from "./repositories/audit.js";
 export * from "./seed.js";

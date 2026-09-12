@@ -64,6 +64,18 @@ export interface InviteView {
   createdAt: string;
 }
 
+export interface AuditEventView {
+  id: string;
+  occurredAt: string;
+  actorUserId: string | null;
+  actorRole: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  metadata: Record<string, unknown>;
+  requestId: string | null;
+}
+
 /** RFC 7807 problem payload returned by the API on errors. */
 interface ProblemBody {
   type?: string;
@@ -255,5 +267,27 @@ export class ApiClient {
     return this.handle<void>(
       await this.http.delete(`${this.base}/v1/admin/invites/${id}`, this.auth()),
     );
+  }
+
+  // ---- Audit (admin/supervisor) -------------------------------------------
+
+  async listAudit(params: {
+    action?: string;
+    targetType?: string;
+    actor?: string;
+    cursor?: string;
+    limit?: number;
+  } = {}): Promise<{ data: AuditEventView[]; nextCursor: string | null }> {
+    const qs = new URLSearchParams();
+    if (params.action) qs.set("action", params.action);
+    if (params.targetType) qs.set("target_type", params.targetType);
+    if (params.actor) qs.set("actor", params.actor);
+    if (params.cursor) qs.set("cursor", params.cursor);
+    if (params.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    const body = await this.handle<{ data: AuditEventView[]; next_cursor: string | null }>(
+      await this.http.get(`${this.base}/v1/audit${q ? `?${q}` : ""}`, this.auth()),
+    );
+    return { data: body.data ?? [], nextCursor: body.next_cursor };
   }
 }

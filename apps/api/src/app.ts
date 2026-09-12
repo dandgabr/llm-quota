@@ -12,7 +12,7 @@
  */
 
 import { Hono } from "hono";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { DbHandle } from "@llm-quota/db";
 import {
   PostgresConnectionStore,
@@ -21,6 +21,7 @@ import {
   PostgresUserStore,
   PostgresInviteStore,
   PostgresIdempotencyStore,
+  PostgresAuditStore,
   listSessionsByUser,
   resolvePrincipal,
   revokeSession,
@@ -166,7 +167,18 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   const userStore = new PostgresUserStore(db.db);
   const inviteStore = new PostgresInviteStore(db.db);
   const idempotencyStore = new PostgresIdempotencyStore(db.db);
+  const auditStore = new PostgresAuditStore(db.db);
   const webBase = publicWebUrl ?? process.env.PUBLIC_WEB_URL ?? "";
+
+  // Correlate every request with an audit event + log line. The client may pass
+  // X-Request-Id only in a strict charset; otherwise a UUID is generated.
+  app.use("*", async (c, next) => {
+    const incoming = c.req.header("x-request-id");
+    const requestId =
+      incoming && /^[A-Za-z0-9._-]{8,128}$/.test(incoming) ? incoming : randomUUID();
+    c.header("X-Request-Id", requestId);
+    await next();
+  });
 
   app.use("*", async (c, next) => {
     // Skip auth for public endpoints (health + auth, matched by segment).
@@ -307,10 +319,33 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
           if (target === p.userId) return { kind: "self" as const };
           const view = await userStore.updateRole(target, body.role, { db: tx });
           if (!view) return { kind: "not_found" as const };
+          await auditStore.record(
+            {
+              action: "user.role_changed",
+              actorUserId: p.userId,
+              actorRole: p.role,
+              targetType: "user",
+              targetId: target,
+              metadata: { role: body.role },
+              requestId: c.req.header("x-request-id"),
+            },
+            { db: tx },
+          );
         }
         if (body.isActive !== undefined) {
           const view = await userStore.setActive(target, body.isActive, { db: tx });
           if (!view) return { kind: "not_found" as const };
+          await auditStore.record(
+            {
+              action: body.isActive ? "user.unblocked" : "user.blocked",
+              actorUserId: p.userId,
+              actorRole: p.role,
+              targetType: "user",
+              targetId: target,
+              requestId: c.req.header("x-request-id"),
+            },
+            { db: tx },
+          );
         }
         const view = await userStore.findById(target, { db: tx });
         return { kind: "ok" as const, view };
@@ -348,6 +383,19 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
           if (remaining < 1) return "last_admin" as const;
         }
         const ok = await userStore.softDelete(target, { db: tx });
+        if (ok) {
+          await auditStore.record(
+            {
+              action: "user.deleted",
+              actorUserId: p.userId,
+              actorRole: p.role,
+              targetType: "user",
+              targetId: target,
+              requestId: c.req.header("x-request-id"),
+            },
+            { db: tx },
+          );
+        }
         return ok ? ("ok" as const) : ("not_found" as const);
       },
       { "app.users_admin_write": "true" },
@@ -421,6 +469,18 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
           ? `${webBase}/invite#token=${token}`
           : `/invite#token=${token}`;
         const payload = { invite, inviteUrl };
+        await auditStore.record(
+          {
+            action: "invite.created",
+            actorUserId: p.userId,
+            actorRole: p.role,
+            targetType: "invite",
+            targetId: invite.id,
+            metadata: { email, role },
+            requestId: c.req.header("x-request-id"),
+          },
+          { db: tx },
+        );
         if (useIdem) await idempotencyStore.complete(p.userId, idemKey, 201, JSON.stringify(payload), { db: tx });
         return { kind: "ok" as const, payload };
       },
@@ -442,9 +502,29 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   app.delete("/v1/admin/invites/:id", async (c) => {
     const p = requireAdmin(c);
     if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
-    const ok = await withRlsContext(db.db, p, (tx) => inviteStore.revoke(c.req.param("id"), { db: tx }), {
-      "app.users_admin_write": "true",
-    });
+    const inviteId = c.req.param("id");
+    const ok = await withRlsContext(
+      db.db,
+      p,
+      async (tx) => {
+        const revoked = await inviteStore.revoke(inviteId, { db: tx });
+        if (revoked) {
+          await auditStore.record(
+            {
+              action: "invite.revoked",
+              actorUserId: p.userId,
+              actorRole: p.role,
+              targetType: "invite",
+              targetId: inviteId,
+              requestId: c.req.header("x-request-id"),
+            },
+            { db: tx },
+          );
+        }
+        return revoked;
+      },
+      { "app.users_admin_write": "true" },
+    );
     if (!ok) return problemJson(c, problem(404, "Not Found", "Invite not found or already used", "not_found"));
     return c.body(null, 204);
   });
@@ -460,10 +540,27 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
 
   app.delete("/v1/connections/:id", async (c) => {
     const p = c.get("principal");
+    const connId = c.req.param("id");
     const n = await withRlsContext(
       db.db,
       p,
-      (tx) => connStore.remove(c.req.param("id"), p.userId, { db: tx }),
+      async (tx) => {
+        const removed = await connStore.remove(connId, p.userId, { db: tx });
+        if (removed) {
+          await auditStore.record(
+            {
+              action: "connection.deleted",
+              actorUserId: p.userId,
+              actorRole: p.role,
+              targetType: "connection",
+              targetId: connId,
+              requestId: c.req.header("x-request-id"),
+            },
+            { db: tx },
+          );
+        }
+        return removed;
+      },
       p.isAdmin ? { "app.users_admin_write": "true" } : {},
     );
     if (n === 0) return problemJson(c, problem(404, "Not Found", "Connection not found", "not_found"));
@@ -485,16 +582,29 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     }
     const p = c.get("principal");
     try {
-      const view = await withRlsContext(db.db, p, (tx) =>
-        connStore.createAndReturnView({
+      const view = await withRlsContext(db.db, p, async (tx) => {
+        const created = await connStore.createAndReturnView({
           userId: p.userId,
           providerId: body.providerId!,
           label: body.label ?? "unnamed",
           connectionType: body.connectionType ?? "api",
           secret,
           db: tx,
-        }),
-      );
+        });
+        await auditStore.record(
+          {
+            action: "connection.created",
+            actorUserId: p.userId,
+            actorRole: p.role,
+            targetType: "connection",
+            targetId: created.id,
+            metadata: { providerKey: created.providerKey },
+            requestId: c.req.header("x-request-id"),
+          },
+          { db: tx },
+        );
+        return created;
+      });
       return c.json(view, 201);
     } catch {
       // Unknown providerId trips the FK constraint -> client error, not 500.
@@ -530,6 +640,46 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
         totals,
       },
     });
+  });
+
+  // ---- Audit trail (Phase B / ADR-014) ------------------------------------
+  app.get("/v1/audit", async (c) => {
+    const p = c.get("principal");
+    if (!hasRole(p.role, "supervisor")) {
+      return problemJson(c, problem(403, "Forbidden", "Supervisor role required", "forbidden"));
+    }
+    const q = c.req.query();
+    const cursor = q.cursor;
+    let beforeOccurredAt: Date | undefined;
+    let beforeId: string | undefined;
+    if (cursor) {
+      const [ts, id] = cursor.split("|");
+      const parsed = ts ? new Date(ts) : null;
+      if (parsed && id && !Number.isNaN(parsed.getTime())) {
+        beforeOccurredAt = parsed;
+        beforeId = id;
+      }
+    }
+    const result = await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.list(
+          {
+            actorUserId: q.actor,
+            action: q.action,
+            targetType: q.target_type,
+            from: q.from ? new Date(q.from) : undefined,
+            to: q.to ? new Date(q.to) : undefined,
+            beforeOccurredAt,
+            beforeId,
+            limit: q.limit ? Number(q.limit) : 50,
+          },
+          { db: tx },
+        ),
+      { "app.is_supervisor_admin": "true" },
+    );
+    return c.json({ data: result.data, has_more: result.nextCursor !== null, next_cursor: result.nextCursor });
   });
 
   // QUERY (RFC 10008) + GET alias share one handler (ADR-008). Params come

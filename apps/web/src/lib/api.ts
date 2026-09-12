@@ -219,7 +219,7 @@ export class ApiClient {
   private readonly base: string;
 
   constructor(
-    private readonly token: string,
+    private token: string,
     private readonly opts: ApiOptions = {},
   ) {
     this.http = opts.http ?? createFetchHttpClient();
@@ -231,8 +231,21 @@ export class ApiClient {
     return { Authorization: `Bearer ${this.token}` };
   }
 
-  /** Shared response handling: 401 hook, then throw a typed `ApiError`. */
+  /** Token rotation (H2): adopt a fresh session token from the server. */
+  private tokenRefresher?: (token: string) => void;
+  /** Wire the refresher once (called by the auth store at login). */
+  setTokenRefresher(fn: (token: string) => void): void {
+    this.tokenRefresher = fn;
+  }
+
+  /** Shared response handling: rotation, 401 hook, then typed errors. */
   private async handle<T>(res: HttpResponse): Promise<T> {
+    const rotated =
+      res.header?.("x-rotated-session") ?? res.header?.("X-Rotated-Session") ?? null;
+    if (rotated) {
+      this.token = rotated;
+      this.tokenRefresher?.(rotated);
+    }
     if (!res.ok) {
       if (res.status === 401) this.opts.onUnauthorized?.();
       throw await toApiError(res);

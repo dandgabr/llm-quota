@@ -776,5 +776,42 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
       });
       expect(denied.status).toBe(403);
     });
+
+    it("F1: purge anonymizes a user (step-up) and the trail keeps the id", async () => {
+      const adminId = await seedUser(t.super, { role: "admin", email: "purge-admin@test.local" });
+      const adminToken = "wire-purge-admin";
+      await createSession(t.super.db, {
+        userId: adminId,
+        tokenHash: hashToken(adminToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+      const target = await seedUser(t.super, { role: "user", email: "purge-target@test.local" });
+      const purge = await fetch(`${base}/v1/admin/users/${target}/purge`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: "nope" }),
+      });
+      // The admin has no password credential -> wrong password -> 401.
+      expect(purge.status).toBe(401);
+      // Give the admin a credential and retry.
+      await seedUserCredential(t.super, adminId, "purge-admin-pass-12");
+      const ok = await fetch(`${base}/v1/admin/users/${target}/purge`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: "purge-admin-pass-12" }),
+      });
+      expect(ok.status).toBe(204);
+      // The user's PII is gone.
+      const list = await fetch(`${base}/v1/admin/users`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      const users = (await list.json()) as { data: { id: string; email: string }[] };
+      expect(users.data.some((u) => u.email === "purge-target@test.local")).toBe(false);
+      // Audit keeps the purge event (with the target id).
+      const audit = await fetch(`${base}/v1/audit?action=user.purged`, { headers: { Authorization: `Bearer ${adminToken}` } });
+      expect(audit.status).toBe(200);
+      const events = (await audit.json()) as { data: { targetId: string }[] };
+      expect(events.data.some((e) => e.targetId === target)).toBe(true);
+    });
   });
 });

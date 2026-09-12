@@ -66,13 +66,21 @@ export const useAuthStore = defineStore("auth", {
     /** API accessor; returns null when unauthenticated. A 401 clears the session. */
     api(opts?: ApiOptions): ApiClient | null {
       if (!this.token) return null;
-      return clientFor(this.token, {
+      const client = clientFor(this.token, {
+        // Server-side rotation (H2): adopt the fresh token and persist it.
         onUnauthorized: () => {
           this.logout();
           onUnauthorizedHandler?.();
         },
         ...opts,
       });
+      client.setTokenRefresher((token) => this.adoptRotatedToken(token));
+      return client;
+    },
+    /** Called by ApiClient when the server rotates the session token (H2). */
+    adoptRotatedToken(token: string) {
+      this.token = token;
+      safeSetItem(TOKEN_KEY, token);
     },
   },
 });

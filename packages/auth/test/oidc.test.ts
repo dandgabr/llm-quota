@@ -63,11 +63,12 @@ describe("OIDC", () => {
           scope: "openid",
         }),
         text: async () => "",
+        header: () => null,
       }),
-      get: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
-      put: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
-      patch: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
-      delete: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
+      get: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "", header: () => null }),
+      put: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "", header: () => null }),
+      patch: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "", header: () => null }),
+      delete: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "", header: () => null }),
     };
     const tokens = await exchangeCodeForTokens(config, discovery, "code", "verifier", http);
     expect(tokens.access_token).toBe("at");
@@ -81,11 +82,12 @@ describe("OIDC", () => {
         status: 400,
         json: async () => ({ error: "invalid_grant" }),
         text: async () => "",
+        header: () => null,
       }),
-      get: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
-      put: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
-      patch: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
-      delete: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
+      get: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "", header: () => null }),
+      put: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "", header: () => null }),
+      patch: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "", header: () => null }),
+      delete: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "", header: () => null }),
     };
     await expect(exchangeCodeForTokens(config, discovery, "bad", "verifier", http)).rejects.toThrow(
       /Token exchange failed/,

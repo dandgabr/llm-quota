@@ -202,4 +202,76 @@ describe("E5 — session idle + rotation", () => {
       .then((r) => r.rows);
     expect(new Date(row!.last_seen_at).getTime()).toBe(before.getTime());
   });
+
+  it("H1: the account-global bucket never hard-locks; it counts for the soft delay", async () => {
+    const store = new PostgresAuthStore(t.app.db, t.kek);
+    const subject = "c".repeat(64);
+    // 60 account-global failures across the window: the count grows...
+    let count = 0;
+    for (let i = 0; i < 60; i++) {
+      await t.app.db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.is_auth_throttle', 'true', true)`);
+        count = await store.recordAccountFailure(subject, 900, { db: tx });
+      });
+    }
+    expect(count).toBe(60);
+    // ...but the (subject, ip) bucket is untouched: no lock is ever set.
+    const ipRow = await t.app.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.is_auth_throttle', 'true', true)`);
+      return store.getLoginAttempt(subject, "d".repeat(64), { db: tx });
+    });
+    expect(ipRow).toBeNull();
+    // The account bucket never produces a lock.
+    const accountRow = await t.app.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.is_auth_throttle', 'true', true)`);
+      return store.getLoginAttempt(subject, "", { db: tx });
+    });
+    expect(accountRow?.lockedUntil ?? null).toBeNull();
+    // Success clears both buckets.
+    await t.app.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.is_auth_throttle', 'true', true)`);
+      await store.resetLoginAttempts(subject, { db: tx });
+    });
+    const cleared = await t.app.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.is_auth_throttle', 'true', true)`);
+      return store.getLoginAttempt(subject, "", { db: tx });
+    });
+    expect(cleared).toBeNull();
+  });
+
+  it("H2: a rotated session within grace is accepted; outside grace rejected", async () => {
+    const userId = await seedUser(t.super, { role: "user", email: "grace@test.local" });
+    const oldToken = "grace-old-token-1";
+    const session = await withRlsContext(t.app.db, owner(userId), (tx) =>
+      createSession(tx, {
+        userId,
+        tokenHash: hashToken(oldToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+        lastSeenAt: new Date(),
+      }),
+    );
+    // Rotate WITHOUT immediate (periodic mode): old token keeps grace.
+    const rotated = await rotateSession(t.app.db, session.id, {
+      userId,
+      tokenHash: hashToken("grace-new-token-1"),
+      expiresAt: new Date(Date.now() + 3600_000),
+    });
+    expect(rotated.rotated).toBe(true);
+    // Within the grace window the old token still resolves.
+    const within = await resolvePrincipal(t.app.db, oldToken, new Date(), undefined, {
+      graceSeconds: 60,
+    });
+    expect(within?.userId).toBe(userId);
+    // Outside the grace window it is rejected.
+    const later = new Date(Date.now() + 61_000);
+    const outside = await resolvePrincipal(t.app.db, oldToken, later, undefined, {
+      graceSeconds: 60,
+    });
+    expect(outside).toBeNull();
+    // The new token always resolves.
+    expect(
+      (await resolvePrincipal(t.app.db, "grace-new-token-1", later, undefined, { graceSeconds: 60 }))
+        ?.userId,
+    ).toBe(userId);
+  });
 });

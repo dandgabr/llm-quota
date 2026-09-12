@@ -176,6 +176,14 @@ function validIdempotencyKey(key: string | undefined): key is string {
   return typeof key === "string" && /^[A-Za-z0-9._-]{8,128}$/.test(key);
 }
 
+/** Discriminated outcome of the MFA step (E5 login). */
+type MfaOutcome =
+  | { kind: "ok"; recovery?: boolean }
+  | { kind: "gone" }
+  | { kind: "throttled" }
+  | { kind: "bad" }
+  | { kind: "config" };
+
 /** Stable hash of a request's method + path template + body (idempotency). */
 function requestHash(method: string, path: string, body: unknown): string {
   return createHash("sha256")
@@ -249,7 +257,12 @@ export function createApiApp({
   const authPepper = process.env.AUTH_PEPPER ?? "";
   // Pepper separation: recovery must NOT silently reuse the throttle pepper.
   const recoveryPepper = process.env.RECOVERY_PEPPER ?? "";
-  const recoveryPepperPrevious = process.env.RECOVERY_PEPPER_PREVIOUS ?? "";
+  // Previous pepper, accepted for VERIFICATION only during rotation. Invalid
+  // values are ignored (never thrown inside the MFA flow).
+  const recoveryPepperPreviousRaw = process.env.RECOVERY_PEPPER_PREVIOUS ?? "";
+  const recoveryPepperPrevious = isValidRecoveryPepper(recoveryPepperPreviousRaw)
+    ? recoveryPepperPreviousRaw
+    : "";
   const stepUpTtlSeconds = envInt("STEP_UP_TTL_SECONDS", 300, 0);
   const currentTime = () => now?.() ?? new Date();
   // Fail-closed in production: without a real pepper, throttle keys/recovery
@@ -310,7 +323,11 @@ export function createApiApp({
         // attacker lock a victim's email.
         let accountDelayMs = 0;
         if (accountThreshold > 0) {
-          const accountCount = await authStore.recordAccountFailure(subjectKey, { db: tx });
+          const accountCount = await authStore.recordAccountFailure(
+            subjectKey,
+            throttle.windowSeconds,
+            { db: tx },
+          );
           if (accountCount >= accountThreshold) {
             accountDelayMs = Math.min(
               accountDelayBaseMs * (accountCount - accountThreshold + 1),
@@ -369,27 +386,46 @@ export function createApiApp({
     }
     c.set("principal", principal);
     // H2 periodic rotation: rotate a session older than the configured age and
-    // return the fresh token in a header (the old token keeps a short grace).
+    // return the fresh token in a header. The rotation NEVER extends the
+    // lineage's absolute expiry, and already-rotated sessions are skipped.
     if (
       rotateSeconds > 0 &&
       principal.sessionId &&
+      !principal.sessionReplacedBy &&
       principal.sessionCreatedAt &&
+      principal.sessionExpiresAt &&
       currentTime().getTime() - principal.sessionCreatedAt.getTime() > rotateSeconds * 1000
     ) {
       const secret = process.env.SESSION_SECRET ?? "";
       if (isValidSessionSecret(secret)) {
         const { token, hash, signature } = issueSessionToken(secret);
-        const expiresAt = new Date(principal.sessionCreatedAt.getTime() + 12 * 3600 * 1000);
         const rotated = await rotateSession(db.db, principal.sessionId, {
           userId: principal.userId,
           tokenHash: hash,
           signature,
-          expiresAt,
+          // Preserve the lineage's absolute expiry — rotation never extends it.
+          expiresAt: principal.sessionExpiresAt,
           stepUpAt: principal.stepUpAt ?? null,
         });
-        // Never rotate past the absolute expiry.
-        if (rotated.rotated && expiresAt.getTime() > currentTime().getTime()) {
+        if (rotated.rotated) {
           c.header("X-Rotated-Session", token);
+          c.header("Cache-Control", "no-store");
+          await withRlsContext(
+            db.db,
+            principal,
+            (tx) =>
+              auditStore.record(
+                {
+                  action: "session.rotated",
+                  actorUserId: principal.userId,
+                  actorRole: principal.role,
+                  targetType: "session",
+                  targetId: rotated.newSessionId,
+                  requestId: c.get("requestId"),
+                },
+                { db: tx },
+              ),
+          );
         }
       }
     }
@@ -737,7 +773,7 @@ export function createApiApp({
     }
     const userId = owner;
     const MAX_ATTEMPTS = 5;
-    const outcome = await withRlsContext(
+    const outcome: MfaOutcome = await withRlsContext<MfaOutcome>(
       db.db,
       { userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
       async (tx) => {
@@ -765,10 +801,12 @@ export function createApiApp({
         if (recoveryPepperPrevious) {
           candidates.push(hashRecoveryCode(code, recoveryPepperPrevious, userId, "v1"));
         }
-        const used = await authStore.consumeRecoveryCode(userId, candidates, {
-          db: tx,
-          equals: constantTimeHashEquals,
-        });
+        const used = await authStore.consumeRecoveryCode(
+          userId,
+          candidates,
+          constantTimeHashEquals,
+          { db: tx },
+        );
         if (used) {
           await authStore.consumeChallenge(challengeId, { db: tx });
           return { kind: "ok" as const, recovery: true };
@@ -1283,8 +1321,12 @@ export function createApiApp({
         }
         const owned = await userStore.ownedResourceCounts(target, { db: tx });
         if (owned.connections > 0 || owned.aggregates > 0) return "has_resources" as const;
+        // Capture the ORIGINAL email before it is scrubbed, then purge the
+        // residual PII that lives outside the users row.
+        const originalEmail = current.email;
         const ok = await userStore.anonymize(target, { db: tx });
         if (ok) {
+          await userStore.purgeResidualPii(target, originalEmail, { db: tx });
           await auditStore.record(
             {
               action: "user.purged",

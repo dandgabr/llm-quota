@@ -10,19 +10,49 @@ import {
 /** In-memory HttpClient stub returning a canned payload. */
 const stubHttp = (body: unknown): HttpClient => ({
   async get() {
-    return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+    return {
+      status: 200,
+      ok: true,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+      header: () => null,
+    };
   },
   async post() {
-    return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+    return {
+      status: 200,
+      ok: true,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+      header: () => null,
+    };
   },
   async put() {
-    return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+    return {
+      status: 200,
+      ok: true,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+      header: () => null,
+    };
   },
   async patch() {
-    return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+    return {
+      status: 200,
+      ok: true,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+      header: () => null,
+    };
   },
   async delete() {
-    return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+    return {
+      status: 200,
+      ok: true,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+      header: () => null,
+    };
   },
 });
 

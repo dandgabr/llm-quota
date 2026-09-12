@@ -165,10 +165,10 @@ export class PostgresAuthStore {
   async consumeRecoveryCode(
     userId: string,
     candidates: string[],
-    opts: { db?: DB; equals?: (a: string, b: string) => boolean } = {},
+    equals: (a: string, b: string) => boolean,
+    opts: { db?: DB } = {},
   ): Promise<boolean> {
     const handle = opts.db ?? this.db;
-    const equals = opts.equals ?? ((a: string, b: string) => a === b && a.length > 0);
     const rows = await handle
       .select({ id: mfaRecoveryCodes.id, codeHash: mfaRecoveryCodes.codeHash })
       .from(mfaRecoveryCodes)
@@ -263,18 +263,22 @@ export class PostgresAuthStore {
    * progressive soft delay (anti distributed brute force without letting an
    * attacker lock a victim's email).
    */
-  async recordAccountFailure(subjectKey: string, opts: { db?: DB } = {}): Promise<number> {
+  async recordAccountFailure(
+    subjectKey: string,
+    windowSeconds: number,
+    opts: { db?: DB } = {},
+  ): Promise<number> {
     const handle = opts.db ?? this.db;
     const res = await handle.execute<{ failed_count: number }>(sql`
       INSERT INTO auth_login_attempts (subject_key, ip_hash, scope, failed_count, window_started_at, last_failed_at)
       VALUES (${subjectKey}, '', 'account', 1, now(), now())
       ON CONFLICT (subject_key, ip_hash) DO UPDATE SET
         failed_count = CASE
-          WHEN auth_login_attempts.window_started_at > now() - make_interval(secs => 900)
+          WHEN auth_login_attempts.window_started_at > now() - make_interval(secs => ${windowSeconds})
             THEN auth_login_attempts.failed_count + 1
           ELSE 1 END,
         window_started_at = CASE
-          WHEN auth_login_attempts.window_started_at > now() - make_interval(secs => 900)
+          WHEN auth_login_attempts.window_started_at > now() - make_interval(secs => ${windowSeconds})
             THEN auth_login_attempts.window_started_at
           ELSE now() END,
         last_failed_at = now(),
@@ -282,17 +286,6 @@ export class PostgresAuthStore {
       RETURNING failed_count
     `);
     return res.rows[0]?.failed_count ?? 1;
-  }
-
-  /** Read the account-global failure count (scope = 'account', ip_hash = ''). */
-  async getAccountFailureCount(subjectKey: string, opts: { db?: DB } = {}): Promise<number> {
-    const handle = opts.db ?? this.db;
-    const [row] = await handle
-      .select({ failedCount: authLoginAttempts.failedCount })
-      .from(authLoginAttempts)
-      .where(and(eq(authLoginAttempts.subjectKey, subjectKey), eq(authLoginAttempts.ipHash, "")))
-      .limit(1);
-    return row?.failedCount ?? 0;
   }
 
   /** Sweep stale throttle rows (collector maintenance). */

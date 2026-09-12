@@ -9,7 +9,15 @@
 import { and, desc, eq, isNull, ne, sql, type InferSelectModel } from "drizzle-orm";
 import type { Role } from "@llm-quota/shared";
 import type { DB } from "../client.js";
-import { mfaRecoveryCodes, totpSecrets, userCredentials, users } from "../schema/auth.js";
+import {
+    idempotencyKeys,
+    mfaRecoveryCodes,
+    totpSecrets,
+    userCredentials,
+    userInvites,
+    users,
+  } from "../schema/auth.js";
+
 import { spendingAggregates, userSessions } from "../schema/history.js";
 import { connections } from "../schema/quotas.js";
 
@@ -279,5 +287,33 @@ export class PostgresUserStore {
     await handle.delete(mfaRecoveryCodes).where(eq(mfaRecoveryCodes.userId, id));
     await handle.update(userSessions).set({ revoked: true }).where(eq(userSessions.userId, id));
     return true;
+  }
+
+  /**
+   * Scrub residual PII that lives OUTSIDE the users row (F1/LGPD): pending
+   * invites carrying the target's email (both as invitee and as inviter),
+   * idempotency ledger rows (response snapshots may contain emails/invite URLs)
+   * and durable login-throttle rows. Caller captures the ORIGINAL email BEFORE
+   * anonymize scrubs the users row.
+   */
+  async purgeResidualPii(
+    id: string,
+    originalEmail: string,
+    opts: { db?: DB } = {},
+  ): Promise<void> {
+    const handle = opts.db ?? this.db;
+    const email = originalEmail.trim().toLowerCase();
+    // Pending invites that carry the target's email (as invitee)…
+    await handle
+      .update(userInvites)
+      .set({ email: sql`'deleted+' || ${id} || '@invalid.local'` })
+      .where(and(sql`lower(${userInvites.email}) = ${email}`, isNull(userInvites.acceptedAt)));
+    // …or as the inviter (third parties' emails in their invites stay, only the
+    // link to this account is severed).
+    await handle
+      .delete(userInvites)
+      .where(and(eq(userInvites.invitedBy, id), isNull(userInvites.acceptedAt)));
+    // Idempotency snapshots may embed emails in the response body.
+    await handle.delete(idempotencyKeys).where(eq(idempotencyKeys.userId, id));
   }
 }

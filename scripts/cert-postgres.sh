@@ -30,4 +30,11 @@ openssl req -x509 -newkey rsa:3072 -nodes \
   -addext "extendedKeyUsage=serverAuth" >/dev/null 2>&1
 
 chmod 600 "$KEY"
+# The official postgres image runs as uid 70 (alpine) and refuses world/group
+# readable keys; chown so the bind-mounted key is usable inside the container.
+if [[ "$(id -u)" == "0" ]]; then
+  chown 70:70 "$KEY"
+else
+  echo "note: run 'sudo chown 70:70 $KEY' so the postgres container can read it" >&2
+fi
 echo "wrote $CRT and $KEY"

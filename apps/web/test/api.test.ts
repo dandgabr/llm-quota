@@ -4,7 +4,13 @@ import { ApiClient, resolveApiBaseUrl } from "../src/lib/api";
 
 /** Minimal HttpClient stub with the verbs ApiClient may call. */
 function makeHttp(overrides: Partial<HttpClient> = {}): HttpClient {
-  const ok = async () => ({ status: 200, ok: true, json: async () => ({}), text: async () => "" });
+  const ok = async () => ({
+    status: 200,
+    ok: true,
+    json: async () => ({}),
+    text: async () => "",
+    header: () => null,
+  });
   return {
     get: ok,
     post: ok,
@@ -20,7 +26,7 @@ describe("ApiClient", () => {
     const http = makeHttp({
       get: async (url) => {
         expect(url).toContain("/v1/quotas");
-        return { status: 200, ok: true, json: async () => ({ data: [{ id: "q1", kind: "credits", usedPercent: 25 }] }), text: async () => "" };
+        return { status: 200, ok: true, json: async () => ({ data: [{ id: "q1", kind: "credits", usedPercent: 25 }] }), text: async () => "", header: () => null };
       },
     });
     const api = new ApiClient("tok", { http, baseUrl: "http://x" });
@@ -33,7 +39,7 @@ describe("ApiClient", () => {
     const http = makeHttp({
       get: async (url) => {
         expect(url).toContain("/v1/history");
-        return { status: 200, ok: true, json: async () => ({ data: [{ windowKey: "d1", spentAmount: 10, currency: "USD" }] }), text: async () => "" };
+        return { status: 200, ok: true, json: async () => ({ data: [{ windowKey: "d1", spentAmount: 10, currency: "USD" }] }), text: async () => "", header: () => null };
       },
     });
     const api = new ApiClient("tok", { http, baseUrl: "http://x" });
@@ -49,7 +55,7 @@ describe("ApiClient", () => {
         expect(url).toContain("/v1/connections");
         expect(String(body)).toContain("hunter2");
         expect(headers?.["Authorization"]).toBe("Bearer tok");
-        return { status: 201, ok: true, json: async () => ({ id: "c1", label: "x" }), text: async () => "" };
+        return { status: 201, ok: true, json: async () => ({ id: "c1", label: "x" }), text: async () => "", header: () => null };
       },
     });
     const api = new ApiClient("tok", { http, baseUrl: "http://x" });
@@ -64,6 +70,7 @@ describe("ApiClient", () => {
         ok: false,
         json: async () => ({ type: "https://api.llm-quota.dev/errors/last-admin", title: "Conflict" }),
         text: async () => "",
+        header: () => null,
       }),
     });
     const api = new ApiClient("tok", { http, baseUrl: "http://x" });

@@ -60,15 +60,6 @@ export function hashRecoveryCode(code: string, pepper: string, userId: string, k
   return `${keyId}$${hmac}`;
 }
 
-/** Parse a stored versioned recovery hash into its key id + HMAC hex. */
-export function parseRecoveryHash(stored: string): { keyId: string; hmac: string } | null {
-  const idx = stored.indexOf("$");
-  if (idx <= 0) return null;
-  const keyId = stored.slice(0, idx);
-  const hmac = stored.slice(idx + 1);
-  return /^[0-9a-f]{64}$/.test(hmac) ? { keyId, hmac } : null;
-}
-
 /** Constant-time comparison of two hex hashes. */
 export function constantTimeHashEquals(a: string, b: string): boolean {
   const ab = Buffer.from(a, "utf8");

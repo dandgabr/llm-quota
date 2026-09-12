@@ -30,6 +30,10 @@ export interface ResolvedPrincipal {
   sessionId?: string;
   sessionCreatedAt?: Date;
   sessionTokenHash?: string;
+  /** Absolute expiry of the current lineage (rotation must never extend it). */
+  sessionExpiresAt?: Date;
+  /** Non-null when the session has already been rotated once (periodic). */
+  sessionReplacedBy?: string | null;
 }
 
 /** Create a new user session row for an issued token hash. */
@@ -84,12 +88,12 @@ export async function resolvePrincipal(
     const session = rows[0];
     if (!session) return null;
     if (session.revoked) return null;
+    if (now > session.expiresAt) return null;
     // A rotated session is accepted only within its short grace window (covers
     // parallel in-flight requests); afterwards the old token is dead.
     if (session.replacedBy && session.rotatedAt) {
       if (grace <= 0 || now.getTime() > session.rotatedAt.getTime() + grace * 1000) return null;
     }
-    if (now > session.expiresAt) return null;
     if (session.signature) {
       if (!signatureSecret) return null;
       if (!verifySessionToken(token, session.signature, signatureSecret)) return null;
@@ -124,6 +128,8 @@ export async function resolvePrincipal(
       sessionId: session.id,
       sessionCreatedAt: session.createdAt,
       sessionTokenHash: tokenHash,
+      sessionExpiresAt: session.expiresAt,
+      sessionReplacedBy: session.replacedBy,
     };
   });
 }

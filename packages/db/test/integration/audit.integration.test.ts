@@ -166,4 +166,31 @@ describe("Phase B — audit trail", () => {
     expect(broken.ok).toBe(false);
     expect(broken.brokenAt).toBeTruthy();
   });
+
+  it("F2: retention sweep re-anchors the chain (verify stays ok after pruning)", async () => {
+    const adminId = await seedUser(t.super, { role: "admin", email: "sweep@test.local" });
+    for (let i = 0; i < 3; i++) {
+      await withRlsContext(
+        t.app.db,
+        adminPrincipal(adminId),
+        (tx) => new PostgresAuditStore(tx).record({ action: "user.created", actorUserId: adminId }, { db: tx }),
+        { "app.users_admin_write": "true" },
+      );
+    }
+    // Age the events past the retention window, then prune via the SECURITY
+    // DEFINER sweep (the same one the collector calls).
+    await t.super.db.execute(
+      sql`UPDATE audit_events SET occurred_at = now() - make_interval(days => 400) WHERE actor_user_id = ${adminId}`,
+    );
+    const swept = await t.super.db
+      .transaction((tx) => new PostgresAuditStore(tx).sweepViaFunction(30, { db: tx }))
+      .then((r) => r);
+    expect(swept).toBeGreaterThanOrEqual(3);
+    // After re-anchoring, verify must remain ok (no false-positive tamper).
+    const after = await t.super.db
+      .transaction((tx) => new PostgresAuditStore(tx).verifyChain({ db: tx }))
+      .then((r) => r);
+    // Either nothing survived (chain empty -> ok) or the anchor was re-set.
+    expect(after.ok).toBe(true);
+  });
 });

@@ -64,8 +64,13 @@ export class PostgresConnectionStore {
   }
 
   /** Load a connection by id, decrypting its secret in memory. */
-  async findById(id: string, userId: string): Promise<DecryptedConnection | null> {
-    const rows = await this.db
+  async findById(
+    id: string,
+    userId: string,
+    opts: { db?: DB } = {},
+  ): Promise<DecryptedConnection | null> {
+    const handle = opts.db ?? this.db;
+    const rows = await handle
       .select()
       .from(connections)
       .where(and(eq(connections.id, id), eq(connections.userId, userId)))

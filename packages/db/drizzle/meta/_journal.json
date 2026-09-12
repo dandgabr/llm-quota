@@ -148,6 +148,13 @@
       "when": 1789192021200,
       "tag": "0020_audit_chain_seq",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1789190000000,
+      "tag": "0021_audit_chain_head_and_sweep",
+      "breakpoints": true
     }
   ]
 }

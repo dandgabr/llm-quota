@@ -80,9 +80,11 @@ export function computeEventHash(
   prevHash: string | null,
   input: AuditInput,
   metadata: Record<string, unknown>,
+  occurredAt: Date,
 ): string {
   const canonical = stableStringify({
     prev: prevHash,
+    occurredAt: occurredAt.toISOString(),
     action: input.action,
     actor: input.actorUserId ?? null,
     actorRole: input.actorRole ?? null,
@@ -128,13 +130,17 @@ export class PostgresAuditStore {
     const handle = opts.db ?? this.db;
     const metadata = sanitizeMetadata(input.metadata ?? {});
     // Tamper-evidence chain: serialize writers and link to the previous hash.
+    // The head is read OUTSIDE RLS (non-admin principals record auth events
+    // and cannot SELECT prior rows) via the SECURITY DEFINER head lookup.
     await handle.execute(sql`SELECT pg_advisory_xact_lock(hashtext('llm-quota:audit'))`);
-    const [prev] = await handle
-      .select({ eventHash: auditEvents.eventHash })
-      .from(auditEvents)
-      .orderBy(desc(auditEvents.seq))
-      .limit(1);
-    const prevHash = prev?.eventHash ?? null;
+    const head = await handle.execute<{ head: string | null }>(
+      sql`SELECT app_audit_head() AS head`,
+    );
+    const prevHash = head.rows[0]?.head ?? null;
+    // occurred_at is generated server-side here (not the column default) so it
+    // participates in the chain hash deterministically.
+    const occurredAt = new Date();
+    const eventHash = computeEventHash(prevHash, input, metadata, occurredAt);
     await handle.insert(auditEvents).values({
       action: input.action,
       actorUserId: input.actorUserId ?? null,
@@ -143,8 +149,9 @@ export class PostgresAuditStore {
       targetId: input.targetId ?? null,
       metadata,
       requestId: input.requestId ?? null,
+      occurredAt,
       prevHash,
-      eventHash: computeEventHash(prevHash, input, metadata),
+      eventHash,
     });
   }
 
@@ -194,16 +201,21 @@ export class PostgresAuditStore {
       .from(auditEvents)
       .orderBy(asc(auditEvents.seq));
     let prevHash: string | null = null;
+    // The first chained row is the ANCHOR: retention may legitimately prune it
+    // (prev_hash points to a deleted row), so only breaks AFTER the anchor
+    // count as tampering. Legacy unchained rows reset the anchor.
+    let anchored = false;
     for (const row of rows) {
-      // Events written before the chain existed (no event_hash) are legacy;
-      // skip them so the chain is verified from the first chained event on.
       if (!row.eventHash) {
         prevHash = null;
+        anchored = false;
         continue;
       }
-      if ((row.prevHash ?? null) !== prevHash) return { ok: false, checked: rows.length, brokenAt: row.id };
+      if (anchored && (row.prevHash ?? null) !== prevHash) {
+        return { ok: false, checked: rows.length, brokenAt: row.id };
+      }
       const expected = computeEventHash(
-        prevHash,
+        row.prevHash ?? null,
         {
           action: row.action,
           actorUserId: row.actorUserId,
@@ -213,9 +225,11 @@ export class PostgresAuditStore {
           requestId: row.requestId,
         },
         row.metadata ?? {},
+        row.occurredAt,
       );
       if (row.eventHash !== expected) return { ok: false, checked: rows.length, brokenAt: row.id };
       prevHash = row.eventHash;
+      anchored = true;
     }
     return { ok: true, checked: rows.length, brokenAt: null };
   }
@@ -231,13 +245,5 @@ export class PostgresAuditStore {
       sql`SELECT app_audit_sweep(${retentionDays}) AS n`,
     );
     return res.rows[0]?.n ?? 0;
-  }
-
-  /** Delete audit events older than the retention window (the only app path). */
-  async sweep(retentionDays: number, now: Date = new Date()): Promise<number> {
-    const rows = await this.db.execute<{ id: string }>(
-      sql`DELETE FROM audit_events WHERE occurred_at < ${now} - make_interval(days => ${retentionDays}) RETURNING id`,
-    );
-    return rows.rows.length;
   }
 }

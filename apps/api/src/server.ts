@@ -121,6 +121,8 @@ export function corsOnce(webOrigin = "http://localhost:5173", includeDevOrigins 
     if (origin && allowed.has(origin)) {
       c.header("Access-Control-Allow-Origin", origin);
       c.header("Vary", "Origin");
+      // Let SPA clients adopt a session rotated by the server (H2).
+      c.header("Access-Control-Expose-Headers", "X-Rotated-Session, X-Request-Id");
     }
     if (c.req.method === "OPTIONS") {
       c.header("Access-Control-Allow-Methods", CORS_METHODS);
@@ -134,12 +136,14 @@ export function corsOnce(webOrigin = "http://localhost:5173", includeDevOrigins 
 
 /** Security headers; HSTS only makes sense on a TLS-terminated listener. */
 export function securityHeaders(tls: boolean) {
-  return (c: Context, next: Next) => {
+  return async (c: Context, next: Next) => {
     if (tls) c.header("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
     c.header("X-Content-Type-Options", "nosniff");
     // Auth responses carry session tokens: never cache them.
     if (c.req.path.startsWith("/auth/")) c.header("Cache-Control", "no-store");
-    return next();
+    await next();
+    // A rotated session token must never sit in a shared cache.
+    if (c.res.headers.get("X-Rotated-Session")) c.header("Cache-Control", "no-store");
   };
 }
 
@@ -376,7 +380,7 @@ export function startCollector(
   db: DbHandle,
   kek: Dek,
   log: (msg: string) => void,
-  intervalMs = Number(process.env.COLLECT_INTERVAL_MS ?? 60_000),
+  intervalMs = envInt("COLLECT_INTERVAL_MS", 60_000, 0),
 ): () => void {
   const registry = createDefaultRegistry();
   const connStore = new PostgresConnectionStore(db.db, kek);
@@ -409,7 +413,7 @@ export function startCollector(
         };
         try {
           await withRlsContext(db.db, owner, async (tx) => {
-            const conn = await connStore.findById(row.id, row.userId);
+            const conn = await connStore.findById(row.id, row.userId, { db: tx });
             if (!conn) return;
             const connectorId = await connStore.providerConnectorId(row.providerId, { db: tx });
             if (!connectorId) return;

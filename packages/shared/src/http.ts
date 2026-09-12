@@ -13,6 +13,8 @@ export interface HttpResponse {
   ok: boolean;
   json(): Promise<unknown>;
   text(): Promise<string>;
+  /** Header lookup (case-insensitive), when the fetch impl exposes it. */
+  header(name: string): string | null;
 }
 
 /** Minimal HTTP client used across connectors and OIDC. */
@@ -46,9 +48,10 @@ export type FetchFn = (
     signal?: AbortSignal;
   },
 ) => Promise<
-  Omit<HttpResponse, "json" | "text"> & {
+  Omit<HttpResponse, "json" | "text" | "header"> & {
     json(): Promise<unknown>;
     text(): Promise<string>;
+    header(name: string): string | null;
   }
 >;
 
@@ -74,6 +77,10 @@ export const createFetchHttpClient = (
     ok: res.ok,
     json: () => res.json(),
     text: () => res.text(),
+    header: (name: string) => {
+      const raw = res as unknown as { headers?: { get(n: string): string | null } };
+      return raw.headers?.get(name) ?? null;
+    },
   });
   return {
     async get(url, headers) {

@@ -1,8 +1,9 @@
 /**
- * vue-router configuration for llm-quota (Phase 6).
+ * vue-router configuration for llm-quota.
  *
- * Routes are lazy-loaded; an auth guard redirects unauthenticated users to
- * `/login`. The `admin` route additionally requires the admin role.
+ * Routes are lazy-loaded. An auth guard redirects unauthenticated users to
+ * `/login`; `/admin*` require the matching role. Onboarding adds two public
+ * routes (`/setup`, `/invite`) and a first-run redirect handled by the shell.
  */
 
 import { createRouter, createWebHistory } from "vue-router";
@@ -11,13 +12,31 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
+      path: "/",
+      name: "landing",
+      component: () => import("../views/LandingView.vue"),
+      meta: { public: true, bare: true },
+    },
+    {
       path: "/login",
       name: "login",
       component: () => import("../views/LoginView.vue"),
-      meta: { public: true },
+      meta: { public: true, bare: true },
     },
     {
-      path: "/",
+      path: "/setup",
+      name: "setup",
+      component: () => import("../views/SetupWizard.vue"),
+      meta: { public: true, bare: true },
+    },
+    {
+      path: "/invite",
+      name: "invite",
+      component: () => import("../views/InviteWizard.vue"),
+      meta: { public: true, bare: true },
+    },
+    {
+      path: "/dashboard",
       name: "dashboard",
       component: () => import("../views/DashboardView.vue"),
     },
@@ -56,12 +75,24 @@ export const router = createRouter({
   ],
 });
 
-/** Auth guard: public routes need no token; others require it + admin check. */
+/**
+ * Auth + onboarding guard. `setupRequired` is injected by the shell (single
+ * fetch) so routing never blocks on a network call.
+ */
+let setupRequired = false;
+export function setSetupRequired(value: boolean): void {
+  setupRequired = value;
+}
+
 router.beforeEach((to) => {
   const token = localStorage.getItem("llm-quota.token");
+  // First run: everything funnels to /setup except the invite flow.
+  if (setupRequired && to.name !== "setup" && to.name !== "invite") {
+    return { name: "setup" };
+  }
   if (to.meta.public) {
-    // Logged-in users visiting /login go to the dashboard.
-    if (to.name === "login" && token) return { name: "dashboard" };
+    // Logged-in users skip landing/login.
+    if ((to.name === "login" || to.name === "landing") && token) return { name: "dashboard" };
     return true;
   }
   if (!token) return { name: "login" };

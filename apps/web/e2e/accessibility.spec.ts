@@ -4,7 +4,7 @@ import { test, expect } from "./support/fixtures.js";
 test.describe("accessibility (WCAG 2.2 AA — ADR-011)", () => {
   for (const theme of ["light", "dark"] as const) {
     test(`no axe color-contrast violations on dashboard (${theme})`, async ({ seededPage, page }) => {
-      await seededPage("/", { role: "user", theme });
+      await seededPage("/dashboard", { role: "user", theme });
       const results = await new AxeBuilder({ page }).analyze();
       const contrast = results.violations.filter((v) => v.id === "color-contrast");
       expect(contrast).toEqual([]);
@@ -19,7 +19,7 @@ test.describe("accessibility (WCAG 2.2 AA — ADR-011)", () => {
   }
 
   test("focus is visible when tabbing through the topbar", async ({ seededPage, page }) => {
-    await seededPage("/", { role: "user" });
+    await seededPage("/dashboard", { role: "user" });
     for (let i = 0; i < 4; i += 1) {
       await page.keyboard.press("Tab");
       const outline = await page.evaluate(() => {
@@ -32,7 +32,7 @@ test.describe("accessibility (WCAG 2.2 AA — ADR-011)", () => {
 
   test("prefers-reduced-motion disables the skeleton animation", async ({ seededPage, page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await seededPage("/", { role: "user", anonymous: false });
+    await seededPage("/dashboard", { role: "user", anonymous: false });
     // After load the skeleton is gone; assert via computed style on a forced one.
     const anim = await page.evaluate(() => {
       const el = document.createElement("div");

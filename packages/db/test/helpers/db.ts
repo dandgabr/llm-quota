@@ -71,6 +71,10 @@ export async function resetDatabase(superH: DbHandle): Promise<void> {
       audit_events,
       users RESTART IDENTITY CASCADE
   `);
+  // Re-seed the singleton setup row (truncate removes it; the app expects it).
+  await superH.db.execute(sql`
+    INSERT INTO instance_settings (id) VALUES ('singleton') ON CONFLICT (id) DO NOTHING
+  `);
 }
 
 /** Insert a user via the superuser handle (bypasses RLS). Returns the user id. */

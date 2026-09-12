@@ -3,12 +3,12 @@ import { test, expect } from "./support/fixtures.js";
 test.describe("admin RBAC journey", () => {
   test("user role is redirected away from /admin", async ({ seededPage, page }) => {
     await seededPage("/admin", { role: "user" });
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/dashboard$/);
   });
 
   test("supervisor role is also redirected away from /admin", async ({ seededPage, page }) => {
     await seededPage("/admin", { role: "supervisor" });
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/dashboard$/);
   });
 
   test("admin sees the admin console", async ({ seededPage, page }) => {

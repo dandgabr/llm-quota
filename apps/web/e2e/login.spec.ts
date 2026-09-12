@@ -6,7 +6,7 @@ test.beforeEach(async ({ resetStub }) => {
 
 test.describe("login journey", () => {
   test("unauthenticated deep-link redirects to /login", async ({ seededPage, page }) => {
-    await seededPage("/", { anonymous: true });
+    await seededPage("/dashboard", { anonymous: true });
     await expect(page).toHaveURL(/\/login$/);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   });
@@ -30,12 +30,12 @@ test.describe("login journey", () => {
     await page.getByLabel(/role/i).selectOption("user");
     await page.getByLabel(/token/i).fill("tok-user");
     await page.getByRole("button", { name: /sign in/i }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/dashboard$/);
     await expect(page.getByText(/user/).first()).toBeVisible();
   });
 
   test("logged-in user visiting /login is bounced to the dashboard", async ({ seededPage, page }) => {
     await seededPage("/login", { role: "user" });
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/dashboard$/);
   });
 });

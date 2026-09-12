@@ -22,6 +22,7 @@ import {
   PostgresInviteStore,
   PostgresIdempotencyStore,
   PostgresAuditStore,
+  PostgresInstanceStore,
   listSessionsByUser,
   resolvePrincipal,
   revokeSession,
@@ -40,6 +41,9 @@ import {
   issueSessionToken,
   isValidSessionSecret,
   issueInviteToken,
+  hashToken,
+  hashPassword,
+  isValidPassword,
 } from "@llm-quota/auth";
 
 type Variables = { principal: ResolvedPrincipal };
@@ -168,6 +172,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   const inviteStore = new PostgresInviteStore(db.db);
   const idempotencyStore = new PostgresIdempotencyStore(db.db);
   const auditStore = new PostgresAuditStore(db.db);
+  const instanceStore = new PostgresInstanceStore(db.db);
   const webBase = publicWebUrl ?? process.env.PUBLIC_WEB_URL ?? "";
 
   // Correlate every request with an audit event + log line. The client may pass
@@ -270,6 +275,145 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       (tx) => createSession(tx, { userId: body.userId, tokenHash: hash, signature, expiresAt }),
     );
     return c.json({ token, expiresAt: expiresAt.toISOString() });
+  });
+
+  // ---- Onboarding (Phase C / ADR-015) -------------------------------------
+  // Public: setup status + first-admin creation + invite accept. All gated by
+  // SECURITY DEFINER authorizers (bootstrap token / invite token), never a GUC.
+  app.get("/auth/setup/status", async (c) => {
+    const required = await instanceStore.setupRequired();
+    return c.json({ required });
+  });
+
+  app.post("/auth/setup", async (c) => {
+    const secret = process.env.SESSION_SECRET ?? "";
+    if (!isValidSessionSecret(secret)) {
+      return problemJson(c, problem(500, "Server Error", "SESSION_SECRET must be ≥ 32 chars", "internal"));
+    }
+    const body = await c.req
+      .json<{
+        token?: string;
+        email?: string;
+        password?: string;
+        firstName?: string;
+        lastName?: string;
+        locale?: string;
+      }>()
+      .catch(() => null);
+    const email = (body?.email ?? "").trim().toLowerCase();
+    const password = body?.password ?? "";
+    if (!body?.token || !email.includes("@") || !isValidPassword(password)) {
+      return problemJson(c, problem(400, "Bad Request", "token, valid email and password (≥12) required", "invalid_params"));
+    }
+    if (!(await instanceStore.setupRequired())) {
+      return problemJson(c, problem(409, "Conflict", "Instance already initialized", "conflict"));
+    }
+    const tokenHash = hashToken(body.token);
+    const passwordHash = await hashPassword(password);
+    const newId = await instanceStore.createFirstAdmin({
+      tokenHash,
+      email,
+      passwordHash,
+      firstName: body.firstName ?? null,
+      lastName: body.lastName ?? null,
+      locale: body.locale ?? "en",
+    });
+    if (!newId) {
+      return problemJson(c, problem(403, "Forbidden", "Invalid or expired setup token", "forbidden"));
+    }
+    const user = await withRlsContext(
+      db.db,
+      { userId: newId, role: "admin", isAdmin: true, isSupervisorAdmin: true },
+      (tx) => userStore.findById(newId, { db: tx }),
+    );
+    await withRlsContext(
+      db.db,
+      { userId: newId, role: "admin", isAdmin: true, isSupervisorAdmin: true },
+      (tx) =>
+        auditStore.record(
+          {
+            action: "auth.setup_completed",
+            actorUserId: newId,
+            actorRole: "admin",
+            targetType: "user",
+            targetId: newId,
+            requestId: c.req.header("x-request-id"),
+          },
+          { db: tx },
+        ),
+    );
+    // Issue a session for the new admin (owner RLS context).
+    const { token, hash, signature } = issueSessionToken(secret);
+    const expiresAt = new Date(Date.now() + 12 * 3600 * 1000);
+    await withRlsContext(
+      db.db,
+      { userId: newId, role: "admin", isAdmin: true, isSupervisorAdmin: true },
+      (tx) => createSession(tx, { userId: newId, tokenHash: hash, signature, expiresAt }),
+    );
+    return c.json({ token, expiresAt: expiresAt.toISOString(), user }, 201);
+  });
+
+  app.post("/auth/invites/accept", async (c) => {
+    const secret = process.env.SESSION_SECRET ?? "";
+    if (!isValidSessionSecret(secret)) {
+      return problemJson(c, problem(500, "Server Error", "SESSION_SECRET must be ≥ 32 chars", "internal"));
+    }
+    const body = await c.req
+      .json<{
+        token?: string;
+        password?: string;
+        firstName?: string;
+        lastName?: string;
+        locale?: string;
+      }>()
+      .catch(() => null);
+    const token = body?.token ?? "";
+    const password = body?.password ?? "";
+    if (!token || !isValidPassword(password)) {
+      return problemJson(c, problem(400, "Bad Request", "token and password (≥12) required", "invalid_params"));
+    }
+    const tokenHash = hashToken(token);
+    const passwordHash = await hashPassword(password);
+    const userId = await instanceStore.acceptInvite({
+      tokenHash,
+      passwordHash,
+      firstName: body?.firstName ?? null,
+      lastName: body?.lastName ?? null,
+      locale: body?.locale ?? "en",
+    });
+    if (!userId) {
+      return problemJson(c, problem(410, "Gone", "Invite is invalid, expired or already used", "invite_expired"));
+    }
+    const user = await withRlsContext(
+      db.db,
+      { userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
+      (tx) => userStore.findById(userId, { db: tx }),
+    );
+    const role: Role = user?.role ?? "user";
+    await withRlsContext(
+      db.db,
+      { userId, role, isAdmin: role === "admin", isSupervisorAdmin: role !== "user" },
+      (tx) =>
+        auditStore.record(
+          {
+            action: "invite.accepted",
+            actorUserId: userId,
+            actorRole: role,
+            targetType: "user",
+            targetId: userId,
+            requestId: c.req.header("x-request-id"),
+          },
+          { db: tx },
+        ),
+    );
+    const { token: sessionToken, hash, signature } = issueSessionToken(secret);
+    const expiresAt = new Date(Date.now() + 12 * 3600 * 1000);
+    await withRlsContext(
+      db.db,
+      { userId, role, isAdmin: role === "admin", isSupervisorAdmin: role !== "user" },
+      (tx) => createSession(tx, { userId, tokenHash: hash, signature, expiresAt }),
+    );
+    return c.json({ token: sessionToken, expiresAt: expiresAt.toISOString(), user }, 201);
   });
 
   // ---- User management (Phase A / ADR-013) --------------------------------

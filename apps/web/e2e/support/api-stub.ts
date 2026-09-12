@@ -65,6 +65,7 @@ let state: {
   history: HistoryPoint[];
   users: UserView[];
   invites: InviteView[];
+  setupRequired: boolean;
 };
 
 function reset() {
@@ -131,6 +132,9 @@ function reset() {
     ],
     invites: [],
   };
+  // Setup defaults to "not required" so existing journeys skip /setup. A test
+  // can flip it via POST /__/setup-required.
+  state.setupRequired = process.env.STUB_SETUP_REQUIRED === "1";
 }
 reset();
 
@@ -178,6 +182,59 @@ const server = createServer(async (req, res) => {
     state.connections = [];
     state.history = [];
     return json(res, 200, { ok: true });
+  }
+  if (url.pathname === "/__/setup-required" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { required?: boolean };
+    state.setupRequired = body.required ?? true;
+    return json(res, 200, { ok: true, required: state.setupRequired });
+  }
+
+  // ---- Public onboarding --------------------------------------------------
+  if (url.pathname === "/auth/setup/status") {
+    return json(res, 200, { required: state.setupRequired });
+  }
+  if (url.pathname === "/auth/setup" && req.method === "POST") {
+    const parsed = JSON.parse((await readBody(req)) || "{}") as { token?: string; email?: string };
+    if (parsed.token !== "valid-setup-token") {
+      return json(res, 403, { type: "https://api.llm-quota.dev/errors/forbidden", title: "Forbidden", status: 403 });
+    }
+    state.setupRequired = false;
+    return json(res, 201, {
+      token: "tok-admin",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      user: {
+        id: "u-owner",
+        email: parsed.email ?? "owner@test.local",
+        firstName: null,
+        lastName: null,
+        role: "admin",
+        locale: "en",
+        isActive: true,
+        hasPassword: true,
+        createdAt: new Date().toISOString(),
+      },
+    });
+  }
+  if (url.pathname === "/auth/invites/accept" && req.method === "POST") {
+    const parsed = JSON.parse((await readBody(req)) || "{}") as { token?: string };
+    if (parsed.token !== "valid-invite-token") {
+      return json(res, 410, { type: "https://api.llm-quota.dev/errors/invite-expired", title: "Gone", status: 410 });
+    }
+    return json(res, 201, {
+      token: "tok-user",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      user: {
+        id: "u-invitee",
+        email: "invitee@test.local",
+        firstName: null,
+        lastName: null,
+        role: "user",
+        locale: "en",
+        isActive: true,
+        hasPassword: true,
+        createdAt: new Date().toISOString(),
+      },
+    });
   }
 
   const role = TOKENS[token];

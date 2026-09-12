@@ -25,6 +25,7 @@ import {
   PostgresConnectionStore,
   PostgresHistoryStore,
   PostgresIdempotencyStore,
+  PostgresInstanceStore,
   PostgresQuotaStore,
   type DbHandle,
   type ResolvedPrincipal,
@@ -38,6 +39,8 @@ import {
 import { ProviderRegistry } from "@llm-quota/providers";
 import { ollamaClaudeConnector } from "@llm-quota/connector-ollama-claude";
 import { openRouterConnector } from "@llm-quota/connector-openrouter";
+import { hashToken } from "@llm-quota/auth";
+import { randomBytes } from "node:crypto";
 import { createApiApp } from "./app.js";
 import { runCollectPass } from "./collector.js";
 
@@ -477,6 +480,38 @@ export function startCollector(
   };
 }
 
+/**
+ * First-run bootstrap: mint + print a one-time setup token when the instance
+ * has no admin. Idempotent-safe: only sets the token while setup is incomplete
+ * (guarded by the SECURITY DEFINER `app_bootstrap_begin`).
+ */
+export async function bootstrapFirstRun(
+  db: DbHandle,
+  log: (msg: string) => void,
+  ttlMinutes = 60,
+): Promise<string | null> {
+  try {
+    const store = new PostgresInstanceStore(db.db);
+    if (!(await store.setupRequired())) return null;
+    const raw = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60_000);
+    const ok = await store.beginBootstrap(hashToken(raw), expiresAt);
+    if (!ok) return null;
+    log("");
+    log("================================================================");
+    log("  llm-quota first-run setup");
+    log("  Open the app and complete setup with this one-time code:");
+    log(`    ${raw}`);
+    log(`  It expires at ${expiresAt.toISOString()} and is shown only once.`);
+    log("================================================================");
+    log("");
+    return raw;
+  } catch (err) {
+    log(`[llm-quota] bootstrap skipped: ${String(err)}`);
+    return null;
+  }
+}
+
 /** `start()` used by `pnpm start`; wires env config, DB + KEK, collector, server. */
 export function start(): Started & { stopCollector(): void } {
   const env = process.env;
@@ -498,6 +533,11 @@ export function start(): Started & { stopCollector(): void } {
     tlsKeyPath: env.TLS_KEY_PATH,
     logger: log,
   });
+
+  // First-run bootstrap: if the instance has no admin yet, mint a one-time
+  // setup token, store only its hash, and print the plaintext ONCE to stdout so
+  // the operator can complete /setup. Never persisted in env.
+  void bootstrapFirstRun(db, log);
 
   const stopCollector =
     envName === "test"

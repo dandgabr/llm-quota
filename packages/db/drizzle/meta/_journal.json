@@ -64,6 +64,13 @@
       "when": 1789183600000,
       "tag": "0008_audit_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789184000000,
+      "tag": "0009_onboarding_authorizers",
+      "breakpoints": true
     }
   ]
 }

@@ -138,6 +138,56 @@ async function toApiError(res: HttpResponse): Promise<ApiError> {
   return err;
 }
 
+/** Public (unauthenticated) API surface for onboarding. */
+export class PublicApiClient {
+  private readonly http: HttpClient;
+  private readonly base: string;
+
+  constructor(opts: ApiOptions = {}) {
+    this.http = opts.http ?? createFetchHttpClient();
+    this.base = opts.baseUrl ?? resolveApiBaseUrl(import.meta.env as Record<string, string | undefined>);
+  }
+
+  private async handle<T>(res: HttpResponse): Promise<T> {
+    if (!res.ok) throw await toApiError(res);
+    if (res.status === 204) return undefined as T;
+    return (await res.json()) as T;
+  }
+
+  async setupStatus(): Promise<{ required: boolean }> {
+    return this.handle<{ required: boolean }>(await this.http.get(`${this.base}/auth/setup/status`));
+  }
+
+  async setup(input: {
+    token: string;
+    email: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+    locale?: string;
+  }): Promise<{ token: string; expiresAt: string; user: UserView }> {
+    return this.handle(
+      await this.http.post(`${this.base}/auth/setup`, JSON.stringify(input), {
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
+  async acceptInvite(input: {
+    token: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+    locale?: string;
+  }): Promise<{ token: string; expiresAt: string; user: UserView }> {
+    return this.handle(
+      await this.http.post(`${this.base}/auth/invites/accept`, JSON.stringify(input), {
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+}
+
 /** Typed client bound to a bearer token. */
 export class ApiClient {
   private readonly http: HttpClient;

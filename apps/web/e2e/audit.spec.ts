@@ -15,6 +15,6 @@ test.describe("audit trail", () => {
 
   test("a plain user is redirected away from the audit log", async ({ seededPage, page }) => {
     await seededPage("/admin/audit", { role: "user" });
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/dashboard$/);
   });
 });

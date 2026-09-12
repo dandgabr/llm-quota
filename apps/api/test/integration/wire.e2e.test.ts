@@ -22,7 +22,7 @@ import {
 } from "../../../../packages/db/test/helpers/db.js";
 import type { TestDb } from "../../../../packages/db/test/helpers/db.js";
 import { hashToken } from "@llm-quota/auth";
-import { createSession, PostgresQuotaStore } from "@llm-quota/db";
+import { createSession, PostgresInstanceStore, PostgresQuotaStore } from "@llm-quota/db";
 
 let t: TestDb;
 let serverApp: Started;
@@ -439,6 +439,80 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
       // A plain user cannot read the audit trail.
       const denied = await fetch(`${base}/v1/audit`, { headers: auth() });
       expect(denied.status).toBe(403);
+    });
+  });
+
+  describe("Phase C — onboarding over the wire", () => {
+    it("rejects an invalid setup token (403) and accepts the valid one once", async () => {
+      // Seed a fresh bootstrap token via the SECURITY DEFINER function.
+      const store = new PostgresInstanceStore(t.super.db);
+      await resetDatabase(t.super);
+      const raw = "wire-bootstrap-token-abcdefgh";
+      await store.beginBootstrap(hashToken(raw), new Date(Date.now() + 60_000));
+
+      const bad = await fetch(`${base}/auth/setup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: "wrong", email: "bad@test.local", password: "a-strong-password-1" }),
+      });
+      expect(bad.status).toBe(403);
+
+      const good = await fetch(`${base}/auth/setup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: raw, email: "wire-owner@test.local", password: "a-strong-password-1" }),
+      });
+      expect(good.status).toBe(201);
+      const body = (await good.json()) as { token: string; user: { role: string } };
+      expect(body.user.role).toBe("admin");
+
+      // Once initialized, setup is refused regardless of the token (409).
+      const again = await fetch(`${base}/auth/setup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: raw, email: "wire-owner2@test.local", password: "a-strong-password-1" }),
+      });
+      expect(again.status).toBe(409);
+
+      // The minted session works.
+      const me = await fetch(`${base}/v1/quotas`, {
+        headers: { Authorization: `Bearer ${body.token}` },
+      });
+      expect(me.status).toBe(200);
+    });
+
+    it("invite accept returns 201 with a session and rejects reuse with 410", async () => {
+      const adminId = await seedUser(t.super, { role: "admin", email: "acc-admin@test.local" });
+      const adminToken = "wire-acc-admin-token";
+      await createSession(t.super.db, {
+        userId: adminId,
+        tokenHash: hashToken(adminToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+      const created = await fetch(`${base}/v1/admin/invites`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "wire-invitee@test.local", role: "user" }),
+      });
+      expect(created.status).toBe(201);
+      const { inviteUrl } = (await created.json()) as { inviteUrl: string };
+      const raw = inviteUrl.split("#token=")[1]!;
+
+      const accept = await fetch(`${base}/auth/invites/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: raw, password: "invitee-password-12" }),
+      });
+      expect(accept.status).toBe(201);
+      const accepted = (await accept.json()) as { user: { email: string } };
+      expect(accepted.user.email).toBe("wire-invitee@test.local");
+
+      const reuse = await fetch(`${base}/auth/invites/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: raw, password: "another-password-12" }),
+      });
+      expect(reuse.status).toBe(410);
     });
   });
 });

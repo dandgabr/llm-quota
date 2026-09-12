@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { reactive, watch } from "vue";
-import { useRouter } from "vue-router";
+import { computed, reactive, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { createTranslator } from "@llm-quota/i18n";
 import { useTranslator, setTranslator } from "./lib/i18n.js";
 import { theme } from "./lib/theme.js";
@@ -10,10 +10,14 @@ import { safeGetItem, safeSetItem } from "./lib/storage.js";
 const t = useTranslator();
 const auth = useAuthStore();
 const router = useRouter();
+const route = useRoute();
 const ui = reactive({
   locale: (safeGetItem("llm-quota.locale") as "en" | "pt-BR") ?? "en",
 });
 const { ui: themeUi, toggle, init } = theme;
+
+// Bare routes (landing/login/setup/invite) render without the app chrome.
+const bare = computed(() => Boolean(route.meta.bare));
 
 // Apply the persisted/system theme before first paint.
 init();
@@ -35,19 +39,22 @@ function switchLocale(next: "en" | "pt-BR") {
 
 function logout() {
   auth.logout();
-  void router.push({ name: "login" });
+  void router.push({ name: "landing" });
 }
 </script>
 
 <template>
-  <div class="shell">
-    <header class="topbar">
+  <div class="shell" :class="{ bare }">
+    <header
+      v-if="!bare"
+      class="topbar"
+    >
       <strong class="brand">{{ t("app.title") }}</strong>
       <nav
         v-if="auth.isAuthenticated"
         class="nav"
       >
-        <RouterLink to="/">{{ t("nav.dashboard") }}</RouterLink>
+        <RouterLink to="/dashboard">{{ t("nav.dashboard") }}</RouterLink>
         <RouterLink to="/connections">{{ t("nav.connections") }}</RouterLink>
         <RouterLink to="/history">{{ t("nav.history") }}</RouterLink>
         <RouterLink
@@ -108,6 +115,9 @@ function logout() {
   max-width: 1080px;
   margin: 0 auto;
   padding: var(--space-4);
+}
+.shell.bare {
+  max-width: none;
 }
 .topbar {
   display: flex;

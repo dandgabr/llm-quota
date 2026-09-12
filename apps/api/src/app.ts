@@ -23,9 +23,12 @@ import {
   PostgresIdempotencyStore,
   PostgresAuditStore,
   PostgresInstanceStore,
+  PostgresAuthStore,
   listSessionsByUser,
   resolvePrincipal,
   revokeSession,
+  revokeSessionByToken,
+  revokeAllSessionsFor,
   createSession,
   withRlsContext,
   type ResolvedPrincipal,
@@ -43,7 +46,11 @@ import {
   issueInviteToken,
   hashToken,
   hashPassword,
+  verifyPassword,
+  dummyVerify,
   isValidPassword,
+  buildTotpUri,
+  verifyTotpWithStep,
 } from "@llm-quota/auth";
 
 type Variables = { principal: ResolvedPrincipal };
@@ -173,6 +180,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   const idempotencyStore = new PostgresIdempotencyStore(db.db);
   const auditStore = new PostgresAuditStore(db.db);
   const instanceStore = new PostgresInstanceStore(db.db);
+  const authStore = new PostgresAuthStore(db.db, kek ?? parseKekFromEnv());
   const webBase = publicWebUrl ?? process.env.PUBLIC_WEB_URL ?? "";
 
   // Correlate every request with an audit event + log line. The client may pass
@@ -232,49 +240,11 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     return c.json({ code_challenge: challenge, state });
   });
 
-  app.get("/auth/mfa/totp/challenge", (c) => {
-    if (!devSessionsEnabled(enableDevSession)) {
-      return problemJson(c, problem(403, "Forbidden", "MFA enrollment not enabled", "forbidden"));
-    }
-    const secret = generateTotpSecret();
-    return c.json({ totp: { secret, verified: false } });
-  });
-
   app.get("/auth/mfa/webauthn/challenge", (c) => {
     if (!devSessionsEnabled(enableDevSession)) {
       return problemJson(c, problem(403, "Forbidden", "MFA enrollment not enabled", "forbidden"));
     }
     return c.json({ challenge: generateWebAuthnChallenge() });
-  });
-
-  app.post("/auth/issue-session", async (c) => {
-    // Fail-closed dev/test issuance. In production this is disabled; real
-    // deployments authenticate via OIDC + MFA (see docs/architecture/security.md).
-    if (!devSessionsEnabled(enableDevSession)) {
-      return problemJson(c, problem(403, "Forbidden", "Disabled (set ENABLE_DEV_SESSION=1 outside production)", "forbidden"));
-    }
-    const secret = process.env.SESSION_SECRET ?? "";
-    if (!isValidSessionSecret(secret)) {
-      return problemJson(c, problem(500, "Server Error", "SESSION_SECRET must be ≥ 32 chars", "internal"));
-    }
-    const body = await c.req
-      .json<{ userId: string; role?: "user" | "supervisor" | "admin"; expiresInSec?: number }>()
-      .catch(() => null);
-    if (!body?.userId) {
-      return problemJson(c, problem(400, "Bad Request", "userId required", "invalid_params"));
-    }
-    // Cap the dev-session lifetime (hard upper bound: 24h).
-    const expiresInSec = Math.min(Math.max(1, body.expiresInSec ?? 3600), 86_400);
-    const { token, hash, signature } = issueSessionToken(secret);
-    const expiresAt = new Date(Date.now() + expiresInSec * 1000);
-    // INSERT runs under the target owner's RLS context so the
-    // user_sessions_own WITH CHECK passes on the non-superuser pool.
-    await withRlsContext(
-      db.db,
-      { userId: body.userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
-      (tx) => createSession(tx, { userId: body.userId, tokenHash: hash, signature, expiresAt }),
-    );
-    return c.json({ token, expiresAt: expiresAt.toISOString() });
   });
 
   // ---- Onboarding (Phase C / ADR-015) -------------------------------------
@@ -414,6 +384,333 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       (tx) => createSession(tx, { userId, tokenHash: hash, signature, expiresAt }),
     );
     return c.json({ token: sessionToken, expiresAt: expiresAt.toISOString(), user }, 201);
+  });
+
+  // ---- Authentication (Phase D / ADR-016) ---------------------------------
+  // Issue a 12h session for a verified user and audit the success.
+  const issueLoginSession = async (
+    c: { req: { header(name: string): string | undefined } },
+    userId: string,
+    role: Role,
+    secret: string,
+  ): Promise<{ token: string; expiresAt: string; user: unknown }> => {
+    const { token, hash, signature } = issueSessionToken(secret);
+    const expiresAt = new Date(Date.now() + 12 * 3600 * 1000);
+    await withRlsContext(
+      db.db,
+      { userId, role, isAdmin: role === "admin", isSupervisorAdmin: role !== "user" },
+      (tx) => createSession(tx, { userId, tokenHash: hash, signature, expiresAt }),
+    );
+    const user = await withRlsContext(
+      db.db,
+      { userId, role, isAdmin: role === "admin", isSupervisorAdmin: role !== "user" },
+      (tx) => userStore.findById(userId, { db: tx }),
+    );
+    await withRlsContext(
+      db.db,
+      { userId, role, isAdmin: role === "admin", isSupervisorAdmin: role !== "user" },
+      (tx) =>
+        auditStore.record(
+          {
+            action: "auth.login_succeeded",
+            actorUserId: userId,
+            actorRole: role,
+            targetType: "session",
+            requestId: c.req.header("x-request-id"),
+          },
+          { db: tx },
+        ),
+    );
+    return { token, expiresAt: expiresAt.toISOString(), user };
+  };
+
+  // Public login: password then (if enrolled) a single-use MFA challenge.
+  app.post("/auth/login", async (c) => {
+    const secret = process.env.SESSION_SECRET ?? "";
+    if (!isValidSessionSecret(secret)) {
+      return problemJson(c, problem(500, "Server Error", "SESSION_SECRET must be ≥ 32 chars", "internal"));
+    }
+    const body = await c.req
+      .json<{ email?: string; password?: string }>()
+      .catch(() => null);
+    const email = (body?.email ?? "").trim().toLowerCase();
+    const password = body?.password ?? "";
+    if (!email || !password) {
+      return problemJson(c, problem(400, "Bad Request", "email and password required", "invalid_params"));
+    }
+    // Pre-auth lookup under app.is_auth + app.auth_email.
+    const lookup = await withRlsContext(
+      db.db,
+      { userId: "", role: "user", isAdmin: false, isSupervisorAdmin: false },
+      (tx) => authStore.findByEmail(email, { db: tx }),
+      { "app.is_auth": "true", "app.auth_email": email },
+    );
+    const okUser = lookup && lookup.isActive && !lookup.deletedAt && lookup.passwordHash;
+    const passwordOk = okUser ? await verifyPassword(password, lookup!.passwordHash!) : false;
+    if (!okUser) await dummyVerify(password); // uniform timing (anti-enumeration)
+    if (!okUser || !passwordOk) {
+      await withRlsContext(
+        db.db,
+        { userId: lookup?.userId ?? "", role: "user", isAdmin: false, isSupervisorAdmin: false },
+        (tx) =>
+          auditStore.record(
+            {
+              action: "auth.login_failed",
+              actorUserId: lookup?.userId ?? null,
+              targetType: "session",
+              requestId: c.req.header("x-request-id"),
+            },
+            { db: tx },
+          ),
+        { "app.is_audit": "true" },
+      );
+      return problemJson(c, problem(401, "Unauthorized", "Invalid credentials", "unauthorized"));
+    }
+    const userId = lookup!.userId;
+    // Is MFA enrolled (verified TOTP)?
+    const totp = await withRlsContext(
+      db.db,
+      { userId, role: lookup!.role as Role, isAdmin: false, isSupervisorAdmin: false },
+      (tx) => authStore.getTotpSecret(userId, { db: tx }),
+    );
+    if (totp?.verified) {
+      const challengeId = await withRlsContext(
+        db.db,
+        { userId, role: lookup!.role as Role, isAdmin: false, isSupervisorAdmin: false },
+        (tx) => authStore.createChallenge(userId, "totp", 300, { db: tx }),
+      );
+      return c.json({ status: "mfa_required", methods: ["totp", "recovery"], challenge: challengeId });
+    }
+    // No MFA: issue the session.
+    const session = await issueLoginSession(c, userId, lookup!.role as Role, secret);
+    return c.json(session);
+  });
+
+  app.post("/auth/login/mfa", async (c) => {
+    const secret = process.env.SESSION_SECRET ?? "";
+    if (!isValidSessionSecret(secret)) {
+      return problemJson(c, problem(500, "Server Error", "SESSION_SECRET must be ≥ 32 chars", "internal"));
+    }
+    const body = await c.req
+      .json<{ challenge?: string; code?: string }>()
+      .catch(() => null);
+    const challengeId = body?.challenge ?? "";
+    const code = (body?.code ?? "").trim();
+    if (!challengeId || !code) {
+      return problemJson(c, problem(400, "Bad Request", "challenge and code required", "invalid_params"));
+    }
+    const result = await withRlsContext(
+      db.db,
+      { userId: "", role: "user", isAdmin: false, isSupervisorAdmin: false },
+      async (tx) => {
+        // Load the challenge (must know the user before we can scope).
+        const challenge = await authStore.getChallenge(challengeId, { db: tx });
+        if (!challenge) return { kind: "gone" as const };
+        return { kind: "loaded" as const, userId: challenge.userId };
+      },
+      { "app.is_auth_challenge": "true" },
+    );
+    if (result.kind === "gone") {
+      return problemJson(c, problem(410, "Gone", "Challenge expired or already used", "mfa_required"));
+    }
+    const userId = result.userId!;
+    const outcome = await withRlsContext(
+      db.db,
+      { userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
+      async (tx) => {
+        const challenge = await authStore.consumeChallenge(challengeId, { db: tx });
+        if (!challenge) return { kind: "gone" as const };
+        const totp = await authStore.getTotpSecret(userId, { db: tx });
+        // Try TOTP first (CAS on last_used_step), then a recovery code.
+        if (totp?.verified) {
+          const verify = verifyTotpWithStep(totp.secret, code, { lastUsedStep: totp.lastUsedStep ?? undefined });
+          if (verify.valid && verify.step !== undefined) {
+            await authStore.verifyTotpSecret(userId, verify.step, { db: tx });
+            return { kind: "ok" as const };
+          }
+        }
+        const used = await authStore.consumeRecoveryCode(userId, hashToken(code), { db: tx });
+        if (used) return { kind: "ok" as const, recovery: true };
+        await authStore.bumpAttempts(challengeId, { db: tx });
+        return { kind: "bad" as const };
+      },
+      { "app.user_id": userId },
+    );
+    if (outcome.kind === "gone") {
+      return problemJson(c, problem(410, "Gone", "Challenge expired or already used", "mfa_required"));
+    }
+    if (outcome.kind === "bad") {
+      return problemJson(c, problem(401, "Unauthorized", "Invalid code", "unauthorized"));
+    }
+    const account = await withRlsContext(
+      db.db,
+      { userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
+      (tx) => authStore.findById(userId, { db: tx }),
+      { "app.user_id": userId },
+    );
+    const role: Role = (account?.role as Role) ?? "user";
+    const session = await issueLoginSession(c, userId, role, secret);
+    return c.json(session);
+  });
+
+  app.post("/auth/logout", async (c) => {
+    const p = c.get("principal");
+    const authHeader = c.req.header("authorization") ?? "";
+    // Revoke the current session (match by token hash).
+    const token = authHeader.slice(7);
+    await withRlsContext(db.db, p, (tx) =>
+      revokeSessionByToken(tx, hashToken(token), p.userId),
+    );
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.record(
+          {
+            action: "auth.logout",
+            actorUserId: p.userId,
+            actorRole: p.role,
+            targetType: "session",
+            requestId: c.req.header("x-request-id"),
+          },
+          { db: tx },
+        ),
+    );
+    return c.body(null, 204);
+  });
+
+  app.post("/auth/password/change", async (c) => {
+    const p = c.get("principal");
+    const body = await c.req
+      .json<{ currentPassword?: string; newPassword?: string }>()
+      .catch(() => null);
+    if (!body?.currentPassword || !isValidPassword(body.newPassword ?? "")) {
+      return problemJson(c, problem(400, "Bad Request", "current and new password (≥12) required", "invalid_params"));
+    }
+    const current = await withRlsContext(
+      db.db,
+      p,
+      (tx) => authStore.findById(p.userId, { db: tx }),
+    );
+    void current;
+    // Verify against the caller's own credential by id.
+    const stored = await withRlsContext(
+      db.db,
+      p,
+      (tx) => userStore.getPasswordHash(p.userId, { db: tx }),
+      { "app.is_self_password_change": "true" },
+    );
+    const ok = stored ? await verifyPassword(body.currentPassword, stored) : false;
+    if (!ok) {
+      return problemJson(c, problem(401, "Unauthorized", "Current password is incorrect", "unauthorized"));
+    }
+    const newHash = await hashPassword(body.newPassword!);
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) => userStore.setPassword(p.userId, newHash, { db: tx }),
+      { "app.is_self_password_change": "true" },
+    );
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.record(
+          {
+            action: "user.password_reset",
+            actorUserId: p.userId,
+            actorRole: p.role,
+            targetType: "user",
+            targetId: p.userId,
+            metadata: { self: true },
+            requestId: c.req.header("x-request-id"),
+          },
+          { db: tx },
+        ),
+    );
+    return c.body(null, 204);
+  });
+
+  // MFA enrollment (authenticated).
+  app.post("/auth/mfa/totp/enroll", async (c) => {
+    const p = c.get("principal");
+    const secret = generateTotpSecret();
+    await withRlsContext(db.db, p, (tx) => authStore.setTotpSecret(p.userId, secret, { db: tx }), {
+      "app.is_self_password_change": "true",
+    });
+    const uri = buildTotpUri({
+      secretBase64Url: secret,
+      accountName: p.userId,
+      issuer: process.env.TOTP_ISSUER ?? "llm-quota",
+    });
+    return c.json({ secret, uri });
+  });
+
+  app.post("/auth/mfa/totp/verify", async (c) => {
+    const p = c.get("principal");
+    const body = await c.req.json<{ code?: string }>().catch(() => null);
+    const code = (body?.code ?? "").trim();
+    if (!code) return problemJson(c, problem(400, "Bad Request", "code required", "invalid_params"));
+    const result = await withRlsContext(
+      db.db,
+      p,
+      async (tx) => {
+        const totp = await authStore.getTotpSecret(p.userId, { db: tx });
+        if (!totp) return { kind: "no_secret" as const };
+        const verify = verifyTotpWithStep(totp.secret, code, { lastUsedStep: totp.lastUsedStep ?? undefined });
+        if (!verify.valid || verify.step === undefined) return { kind: "bad" as const };
+        await authStore.verifyTotpSecret(p.userId, verify.step, { db: tx });
+        return { kind: "ok" as const };
+      },
+      { "app.is_self_password_change": "true" },
+    );
+    if (result.kind === "no_secret") {
+      return problemJson(c, problem(409, "Conflict", "Start enrollment first", "conflict"));
+    }
+    if (result.kind === "bad") {
+      return problemJson(c, problem(401, "Unauthorized", "Invalid code", "unauthorized"));
+    }
+    // Generate recovery codes (shown once).
+    const codes = Array.from({ length: 10 }, () => issueInviteToken().token.slice(0, 14));
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) => authStore.setRecoveryCodes(p.userId, codes.map((c2) => hashToken(c2)), { db: tx }),
+      { "app.is_self_password_change": "true" },
+    );
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.record(
+          { action: "mfa.enrolled", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: p.userId, requestId: c.req.header("x-request-id") },
+          { db: tx },
+        ),
+    );
+    return c.json({ ok: true, recoveryCodes: codes });
+  });
+
+  app.delete("/auth/mfa/totp", async (c) => {
+    const p = c.get("principal");
+    await withRlsContext(
+      db.db,
+      p,
+      async (tx) => {
+        await authStore.deleteTotpSecret(p.userId, { db: tx });
+        await authStore.setRecoveryCodes(p.userId, [], { db: tx });
+      },
+      { "app.is_self_password_change": "true" },
+    );
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.record(
+          { action: "mfa.disabled", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: p.userId, requestId: c.req.header("x-request-id") },
+          { db: tx },
+        ),
+    );
+    return c.body(null, 204);
   });
 
   // ---- User management (Phase A / ADR-013) --------------------------------
@@ -670,6 +967,32 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       { "app.users_admin_write": "true" },
     );
     if (!ok) return problemJson(c, problem(404, "Not Found", "Invite not found or already used", "not_found"));
+    return c.body(null, 204);
+  });
+
+  app.delete("/v1/admin/users/:id/mfa", async (c) => {
+    const p = requireAdmin(c);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
+    const target = c.req.param("id");
+    await withRlsContext(
+      db.db,
+      p,
+      async (tx) => {
+        await authStore.deleteTotpSecret(target, { db: tx });
+        await authStore.setRecoveryCodes(target, [], { db: tx });
+        await revokeAllSessionsFor(tx, target);
+      },
+      { "app.users_admin_write": "true" },
+    );
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.record(
+          { action: "mfa.admin_reset", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: target, requestId: c.req.header("x-request-id") },
+          { db: tx },
+        ),
+    );
     return c.body(null, 204);
   });
 

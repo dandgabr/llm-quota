@@ -129,9 +129,50 @@ export const totpSecrets = pgTable("totp_secrets", {
     .references(() => users.id, { onDelete: "cascade" }),
   secretCipher: text("secret_cipher").notNull(),
   algorithm: varchar("algorithm", { length: 20 }).notNull().default("SHA1"),
+  /** Last consumed TOTP step (anti-replay). */
+  lastUsedStep: integer("last_used_step"),
   verifiedAt: timestamp("verified_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Single-use MFA recovery codes (hashed; shown once at enrollment). */
+export const mfaRecoveryCodes = pgTable(
+  "mfa_recovery_codes",
+  {
+    id: id("id"),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    codeHash: varchar("code_hash", { length: 128 }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    codeUnique: uniqueIndex("mfa_recovery_codes_code_unique").on(t.userId, t.codeHash),
+  }),
+);
+
+/**
+ * Short-lived, single-use login MFA challenge. NOT a session: it cannot be
+ * resolved by the auth middleware, only consumed once by the MFA step.
+ */
+export const authChallenges = pgTable(
+  "auth_challenges",
+  {
+    id: id("id"),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    method: varchar("method", { length: 20 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    challengeUserIdx: index("auth_challenges_user_idx").on(t.userId, t.expiresAt),
+  }),
+);
 
 /** Registered OIDC identity providers (Google/GitHub/Discord/SSO future). */
 export const identityProviders = pgTable("identity_providers", {

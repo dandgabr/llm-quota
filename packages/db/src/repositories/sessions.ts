@@ -111,6 +111,26 @@ export async function revokeSession(db: DB, id: string, userId: string): Promise
   return result.length;
 }
 
+/** Revoke every active session for a user (block/password-reset/MFA reset). */
+export async function revokeAllSessionsFor(db: DB, userId: string): Promise<number> {
+  const result = await db
+    .update(userSessions)
+    .set({ revoked: true })
+    .where(eq(userSessions.userId, userId))
+    .returning({ id: userSessions.id });
+  return result.length;
+}
+
+/** Revoke a session by its token hash (logout), owner-scoped. */
+export async function revokeSessionByToken(db: DB, tokenHash: string, userId: string): Promise<number> {
+  const result = await db
+    .update(userSessions)
+    .set({ revoked: true })
+    .where(and(eq(userSessions.tokenHash, tokenHash), eq(userSessions.userId, userId)))
+    .returning({ id: userSessions.id });
+  return result.length;
+}
+
 /**
  * Run `fn` inside a managed transaction that sets the `app.*` RLS GUCs for the
  * given principal via `SET LOCAL`. The settings are transaction-scoped, so they

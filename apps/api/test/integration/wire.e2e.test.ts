@@ -16,6 +16,7 @@ import { buildServer, type Started } from "../../src/server.js";
 import {
   setupTestDb,
   seedUser,
+  seedUserCredential,
   seedProvider,
   resetDatabase,
   TEST_KEK,
@@ -226,32 +227,29 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
     expect(del.status).toBe(404);
   });
 
-  it("POST /auth/issue-session issues a working dev session when enabled", async () => {
-    process.env.ENABLE_DEV_SESSION = "1";
-    const res = await fetch(`${base}/auth/issue-session`, {
+  it("POST /auth/login issues a working session for a valid password", async () => {
+    await seedUserCredential(t.super, aliceId, "alice-password-123");
+    const res = await fetch(`${base}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: aliceId, expiresInSec: 120 }),
+      body: JSON.stringify({ email: "wire@test.local", password: "alice-password-123" }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { token: string; expiresAt: string };
+    const body = (await res.json()) as { token?: string; user?: { id: string } };
     expect(body.token).toBeTruthy();
-
-    // The minted (signed) token must authenticate.
     const me = await fetch(`${base}/v1/quotas`, {
       headers: { Authorization: `Bearer ${body.token}` },
     });
     expect(me.status).toBe(200);
   });
 
-  it("POST /auth/issue-session fails closed when ENABLE_DEV_SESSION is unset", async () => {
-    delete process.env.ENABLE_DEV_SESSION;
-    const res = await fetch(`${base}/auth/issue-session`, {
+  it("POST /auth/login rejects a wrong password with 401", async () => {
+    const res = await fetch(`${base}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: aliceId }),
+      body: JSON.stringify({ email: "wire@test.local", password: "definitely-wrong-1" }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it("GET /auth/oidc/authorize never leaks the PKCE code_verifier (dev-gated)", async () => {

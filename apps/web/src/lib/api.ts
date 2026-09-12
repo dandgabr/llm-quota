@@ -76,6 +76,11 @@ export interface AuditEventView {
   requestId: string | null;
 }
 
+/** Result of `POST /auth/login`: either a session or an MFA challenge. */
+export type LoginResult =
+  | { status: "mfa_required"; methods: string[]; challenge: string }
+  | { status?: undefined; token: string; expiresAt: string; user: UserView };
+
 /** RFC 7807 problem payload returned by the API on errors. */
 interface ProblemBody {
   type?: string;
@@ -156,6 +161,26 @@ export class PublicApiClient {
 
   async setupStatus(): Promise<{ required: boolean }> {
     return this.handle<{ required: boolean }>(await this.http.get(`${this.base}/auth/setup/status`));
+  }
+
+  async login(input: { email: string; password: string }): Promise<LoginResult> {
+    return this.handle<LoginResult>(
+      await this.http.post(`${this.base}/auth/login`, JSON.stringify(input), {
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
+  async loginMfa(input: { challenge: string; code: string }): Promise<{
+    token: string;
+    expiresAt: string;
+    user: UserView;
+  }> {
+    return this.handle(
+      await this.http.post(`${this.base}/auth/login/mfa`, JSON.stringify(input), {
+        "Content-Type": "application/json",
+      }),
+    );
   }
 
   async setup(input: {

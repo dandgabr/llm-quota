@@ -68,7 +68,7 @@ export async function resetDatabase(superH: DbHandle): Promise<void> {
     TRUNCATE TABLE user_sessions, spending_aggregates, quota_snapshots, quota_sessions,
       connections, quota_providers, totp_secrets, webauthn_credentials,
       user_credentials, user_invites, idempotency_keys, instance_settings,
-      audit_events,
+      audit_events, auth_challenges, mfa_recovery_codes,
       users RESTART IDENTITY CASCADE
   `);
   // Re-seed the singleton setup row (truncate removes it; the app expects it).
@@ -99,6 +99,23 @@ export async function seedUser(
       .values({ userId: row.id, passwordHash: input.passwordHash, passwordUpdatedAt: new Date() });
   }
   return row.id;
+}
+
+/** Set (or replace) a user's password credential via the superuser handle. */
+export async function seedUserCredential(
+  superH: DbHandle,
+  userId: string,
+  password: string,
+): Promise<void> {
+  const { hashPassword } = await import("@llm-quota/auth");
+  const passwordHash = await hashPassword(password);
+  await superH.db
+    .insert(userCredentials)
+    .values({ userId, passwordHash, passwordUpdatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: userCredentials.userId,
+      set: { passwordHash, passwordUpdatedAt: new Date() },
+    });
 }
 
 /** Seed a quota_provider (via superuser) and return its uuid id. */

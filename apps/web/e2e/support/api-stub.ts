@@ -215,6 +215,31 @@ const server = createServer(async (req, res) => {
       },
     });
   }
+  if (url.pathname === "/auth/login" && req.method === "POST") {
+    const parsed = JSON.parse((await readBody(req)) || "{}") as { email?: string; password?: string };
+    if (parsed.email === "mfa@test.local") {
+      return json(res, 200, { status: "mfa_required", methods: ["totp", "recovery"], challenge: "chal-1" });
+    }
+    if (parsed.password !== "correct-password") {
+      return json(res, 401, { type: "https://api.llm-quota.dev/errors/unauthorized", title: "Unauthorized", status: 401 });
+    }
+    return json(res, 200, {
+      token: "tok-user",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      user: { id: "u-user", email: parsed.email, firstName: null, lastName: null, role: "user", locale: "en", isActive: true, hasPassword: true, createdAt: new Date().toISOString() },
+    });
+  }
+  if (url.pathname === "/auth/login/mfa" && req.method === "POST") {
+    const parsed = JSON.parse((await readBody(req)) || "{}") as { code?: string };
+    if (parsed.code !== "123456") {
+      return json(res, 401, { type: "https://api.llm-quota.dev/errors/unauthorized", title: "Unauthorized", status: 401 });
+    }
+    return json(res, 200, {
+      token: "tok-user",
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      user: { id: "u-user", email: "mfa@test.local", firstName: null, lastName: null, role: "user", locale: "en", isActive: true, hasPassword: true, createdAt: new Date().toISOString() },
+    });
+  }
   if (url.pathname === "/auth/invites/accept" && req.method === "POST") {
     const parsed = JSON.parse((await readBody(req)) || "{}") as { token?: string };
     if (parsed.token !== "valid-invite-token") {

@@ -235,6 +235,17 @@ export class PostgresUserStore {
     await handle.update(userSessions).set({ revoked: true }).where(eq(userSessions.userId, id));
   }
 
+  /** Read a user's stored password hash (owner/self-service path). */
+  async getPasswordHash(id: string, opts: { db?: DB } = {}): Promise<string | null> {
+    const handle = opts.db ?? this.db;
+    const [row] = await handle
+      .select({ passwordHash: userCredentials.passwordHash })
+      .from(userCredentials)
+      .where(eq(userCredentials.userId, id))
+      .limit(1);
+    return row?.passwordHash ?? null;
+  }
+
   /** Acquire the advisory lock that serializes last-admin guards. */
   async lockLastAdminGuard(tx: DB): Promise<void> {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${LAST_ADMIN_LOCK})`);

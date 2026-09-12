@@ -1,32 +1,57 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
-import { ApiClient } from "../lib/api";
+import { PublicApiClient, ApiError } from "../lib/api";
 import { useTranslator } from "../lib/i18n";
 
 const t = useTranslator();
 const auth = useAuthStore();
 const router = useRouter();
-const token = ref("");
-const role = ref<"user" | "supervisor" | "admin">("user");
+
+const step = ref<"credentials" | "mfa">("credentials");
+const email = ref("");
+const password = ref("");
+const code = ref("");
+const challenge = ref("");
 const error = ref<string | null>(null);
 const submitting = ref(false);
 
-async function submit() {
-  if (!token.value.trim()) {
-    error.value = "Enter the session token issued by the API.";
-    return;
-  }
+const canSubmitCredentials = computed(() => email.value.includes("@") && password.value.length > 0);
+const canSubmitMfa = computed(() => code.value.trim().length > 0);
+
+async function submitCredentials() {
+  if (!canSubmitCredentials.value) return;
   submitting.value = true;
   error.value = null;
-  const api = new ApiClient(token.value.trim());
   try {
-    await api.listSessions();
-    auth.login({ token: token.value.trim(), role: role.value });
+    const res = await new PublicApiClient().login({ email: email.value.trim().toLowerCase(), password: password.value });
+    password.value = "";
+    if ("status" in res && res.status === "mfa_required") {
+      challenge.value = res.challenge;
+      step.value = "mfa";
+      return;
+    }
+    const session = res as { token: string; user: { role: "user" | "supervisor" | "admin" } };
+    auth.login({ token: session.token, role: session.user.role });
     void router.push({ name: "dashboard" });
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : "Login failed";
+  } catch (err) {
+    error.value = err instanceof ApiError ? t("auth.invalidCredentials") : t("errors.generic");
+  } finally {
+    submitting.value = false;
+  }
+}
+
+async function submitMfa() {
+  if (!canSubmitMfa.value) return;
+  submitting.value = true;
+  error.value = null;
+  try {
+    const session = await new PublicApiClient().loginMfa({ challenge: challenge.value, code: code.value.trim() });
+    auth.login({ token: session.token, role: session.user.role });
+    void router.push({ name: "dashboard" });
+  } catch (err) {
+    error.value = err instanceof ApiError && err.status === 410 ? t("auth.mfaExpired") : t("auth.invalidCode");
   } finally {
     submitting.value = false;
   }
@@ -39,34 +64,61 @@ async function submit() {
     :aria-busy="submitting"
   >
     <span class="micro">{{ t("app.title") }}</span>
-    <h1>{{ t("auth.login") }}</h1>
-    <p class="hint">
-      Paste the session token obtained from the API login/OIDC flow (Phase 6).
-    </p>
+    <h1 tabindex="-1">
+      {{ t("auth.login") }}
+    </h1>
 
-    <form @submit.prevent="submit">
-      <label>
-        Role (for demo)
-        <select v-model="role">
-          <option value="user">user</option>
-          <option value="supervisor">supervisor</option>
-          <option value="admin">admin</option>
-        </select>
-      </label>
-      <label>
-        Token
-        <input
-          v-model="token"
-          autocomplete="off"
+    <template v-if="step === 'credentials'">
+      <form @submit.prevent="submitCredentials">
+        <label>
+          {{ t("auth.email") }}
+          <input
+            v-model="email"
+            type="email"
+            autocomplete="username"
+            required
+          >
+        </label>
+        <label>
+          {{ t("auth.password") }}
+          <input
+            v-model="password"
+            type="password"
+            autocomplete="current-password"
+            required
+          >
+        </label>
+        <button
+          type="submit"
+          :disabled="!canSubmitCredentials || submitting"
         >
-      </label>
-      <button
-        type="submit"
-        :disabled="!token.trim() || submitting"
-      >
-        {{ submitting ? t("app.loading") : t("auth.login") }}
-      </button>
-    </form>
+          {{ submitting ? t("app.loading") : t("auth.login") }}
+        </button>
+      </form>
+    </template>
+
+    <template v-else>
+      <p class="hint">
+        {{ t("auth.mfaPrompt") }}
+      </p>
+      <form @submit.prevent="submitMfa">
+        <label>
+          {{ t("auth.mfaCode") }}
+          <input
+            v-model="code"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            required
+          >
+        </label>
+        <button
+          type="submit"
+          :disabled="!canSubmitMfa || submitting"
+        >
+          {{ submitting ? t("app.loading") : t("auth.verify") }}
+        </button>
+      </form>
+    </template>
 
     <p
       v-if="error"
@@ -75,15 +127,13 @@ async function submit() {
     >
       {{ error }}
     </p>
-    <p class="mfa-note">
-      {{ t("auth.mfa.totp") }} · {{ t("auth.mfa.webauthn") }} — server-side (ADR-009), enrollment UI in Phase 7.
-    </p>
   </section>
 </template>
 
 <style scoped>
 .login {
   max-width: 420px;
+  margin: var(--space-11) auto;
 }
 form {
   display: grid;
@@ -100,9 +150,5 @@ label {
 }
 .error {
   color: var(--status-danger);
-}
-.mfa-note {
-  color: var(--text-muted);
-  font-size: 13px;
 }
 </style>

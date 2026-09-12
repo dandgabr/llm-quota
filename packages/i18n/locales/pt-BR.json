@@ -57,6 +57,14 @@
   "auth": {
     "login": "Entrar",
     "logout": "Sair",
+    "email": "E-mail",
+    "password": "Senha",
+    "mfaPrompt": "Informe o código de 6 dígitos do seu autenticador, ou um código de recuperação.",
+    "mfaCode": "Código de autenticação",
+    "verify": "Verificar",
+    "invalidCredentials": "E-mail ou senha inválidos.",
+    "invalidCode": "Código inválido. Tente novamente.",
+    "mfaExpired": "Este desafio expirou. Entre novamente.",
     "mfa": {
       "totp": "Aplicativo autenticador (TOTP)",
       "webauthn": "Passkey / chave de segurança"

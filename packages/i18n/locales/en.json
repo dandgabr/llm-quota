@@ -56,6 +56,14 @@
   "auth": {
     "login": "Sign in",
     "logout": "Sign out",
+    "email": "Email",
+    "password": "Password",
+    "mfaPrompt": "Enter the 6-digit code from your authenticator app, or a recovery code.",
+    "mfaCode": "Authentication code",
+    "verify": "Verify",
+    "invalidCredentials": "Invalid email or password.",
+    "invalidCode": "Invalid code. Try again.",
+    "mfaExpired": "This challenge expired. Sign in again.",
     "mfa": {
       "totp": "Authenticator app (TOTP)",
       "webauthn": "Passkey / security key"

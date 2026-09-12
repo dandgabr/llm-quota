@@ -38,6 +38,8 @@ export const userSessions = pgTable(
     replacedBy: uuid("replaced_by").references((): AnyPgColumn => userSessions.id, {
       onDelete: "set null",
     }),
+    /** When this session was rotated away; the old token has a short grace. */
+    rotatedAt: timestamp("rotated_at", { withTimezone: true }),
     revoked: boolean("revoked").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

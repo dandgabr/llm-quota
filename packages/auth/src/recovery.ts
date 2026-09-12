@@ -47,15 +47,26 @@ export function normalizeRecoveryCode(raw: string): string {
 
 /**
  * Hash a recovery code for storage/comparison. Throws when the pepper is
- * invalid so no code path can ever store/verify an unpeppered hash.
+ * invalid so no code path can ever store/verify an unpeppered hash. The stored
+ * value is versioned (`v1$<keyId>$<hmac>`) so peppers can be rotated.
  */
-export function hashRecoveryCode(code: string, pepper: string, userId: string): string {
+export function hashRecoveryCode(code: string, pepper: string, userId: string, keyId = "v1"): string {
   if (!isValidRecoveryPepper(pepper)) {
     throw new Error("RECOVERY_PEPPER is missing or too short (>= 32 chars required)");
   }
-  return createHmac("sha256", pepper)
+  const hmac = createHmac("sha256", pepper)
     .update(`v1\u0000${userId}\u0000${normalizeRecoveryCode(code)}`)
     .digest("hex");
+  return `${keyId}$${hmac}`;
+}
+
+/** Parse a stored versioned recovery hash into its key id + HMAC hex. */
+export function parseRecoveryHash(stored: string): { keyId: string; hmac: string } | null {
+  const idx = stored.indexOf("$");
+  if (idx <= 0) return null;
+  const keyId = stored.slice(0, idx);
+  const hmac = stored.slice(idx + 1);
+  return /^[0-9a-f]{64}$/.test(hmac) ? { keyId, hmac } : null;
 }
 
 /** Constant-time comparison of two hex hashes. */

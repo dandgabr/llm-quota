@@ -31,6 +31,17 @@ services:
       # Idempotent first-boot provisioning: creates llmquota_app with the
       # env-provided password (runs only on an empty data volume).
       - ./pg/init-prod.sh:/docker-entrypoint-initdb.d/10-init-app-role.sh:ro,z
+      # TLS server cert/key (H4). Generate with scripts/cert-postgres.sh.
+      - ../certs/postgres.crt:/etc/postgresql/postgres.crt:ro,z
+      - ../certs/postgres.key:/etc/postgresql/postgres.key:ro,z
+    command:
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/postgresql/postgres.crt
+      - -c
+      - ssl_key_file=/etc/postgresql/postgres.key
+    user: postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmquota} -d ${POSTGRES_DB:-llm_quota}"]
       interval: 5s
@@ -47,7 +58,9 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: 3000
       # Non-superuser pool identity: FORCE RLS applies (tenant isolation).
-      DATABASE_URL: postgres://llmquota_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-llm_quota}
+      # sslmode=verify-full + the mounted CA enforces encrypted, authenticated
+      # transport to Postgres (H4).
+      DATABASE_URL: postgres://llmquota_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-llm_quota}?sslmode=verify-full&sslrootcert=/etc/llm-quota/postgres.crt
       LLM_QUOTA_KEK: ${LLM_QUOTA_KEK:?set LLM_QUOTA_KEK (base64 32 bytes)}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (>=32 chars)}
       # Auth hardening peppers (required in production; fail-closed otherwise).
@@ -69,6 +82,9 @@ services:
       postgres:
         condition: service_healthy
     networks: [internal]
+    volumes:
+      # CA that signs the Postgres server cert (H4 verify-full).
+      - ../certs/postgres.crt:/etc/llm-quota/postgres.crt:ro,z
 
   web:
     build:

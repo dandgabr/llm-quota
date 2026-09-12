@@ -113,6 +113,13 @@
       "when": 1789188915000,
       "tag": "0015_session_schema_reconcile",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789191525201,
+      "tag": "0016_session_rotation_grace",
+      "breakpoints": true
     }
   ]
 }

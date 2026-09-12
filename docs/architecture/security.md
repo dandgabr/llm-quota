@@ -144,10 +144,12 @@ tenant-scoped by design.
 | Item | Status |
 | ---- | ------ |
 | Bearer token in `localStorage` | Accepted trade-off (XSS surface); mitigated by edge CSP; no HttpOnly cookies today. |
-| Production login path | **Missing** — OIDC id_token validation, server-side state/verifier persistence, MFA verify endpoints not implemented; only fail-closed dev endpoints exist. |
-| api ↔ postgres TLS | Not enforced in the shipped compose (internal network only); backlog. |
-| In-process rate limiter | Per-instance budget; edge `limit_req` is the global control. |
-| Secrets at rest | Implemented (envelope v1); KEK rotation is a manual procedure, no tooling. |
+| Production login path | **Implemented** — password + TOTP MFA + recovery codes, step-up for sensitive MFA actions, durable account+IP lockout, idle timeout and session rotation. |
+| SSO / provisioning | Not implemented (future): OIDC id_token validation + state/PKCE, SCIM. Passkeys (WebAuthn register) also future. |
+| api ↔ postgres TLS | **Enforced in the default compose** (`sslmode=verify-full` + mounted CA via `scripts/cert-postgres.sh`); local cert is dev-only. |
+| In-process rate limiter | Per-instance budget; edge `limit_req` is the global control. Backed by a durable DB lockout per (account, IP). |
+| Distributed attack (many IPs) | Account-global soft delay only (no hard lock by email); documented residual risk. |
+| Secrets at rest | Implemented (envelope v1); KEK rotation is a documented manual procedure (§6 runbook); pepper rotation via `RECOVERY_PEPPER_PREVIOUS`. |
 | Edge rate limit | Implemented via `--profile edge`; without the profile only the app-layer limiter applies. |
 
 ## Testing/verification

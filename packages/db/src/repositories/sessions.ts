@@ -9,7 +9,7 @@
  * custom GUCs compare (ADR-009 consequence).
  */
 
-import { and, desc, eq, sql, type InferSelectModel } from "drizzle-orm";
+import { and, desc, eq, isNull, sql, type InferSelectModel } from "drizzle-orm";
 import type { Role } from "@llm-quota/shared";
 import { hashToken, verifySessionToken } from "@llm-quota/auth";
 import type { DB } from "../client.js";
@@ -26,6 +26,10 @@ export interface ResolvedPrincipal {
   isSupervisorAdmin: boolean;
   /** When the current session last passed a step-up reauthentication. */
   stepUpAt?: Date | null;
+  /** The resolved session's id + age (for periodic rotation decisions). */
+  sessionId?: string;
+  sessionCreatedAt?: Date;
+  sessionTokenHash?: string;
 }
 
 /** Create a new user session row for an issued token hash. */
@@ -64,10 +68,11 @@ export async function resolvePrincipal(
   token: string,
   now: Date = new Date(),
   signatureSecret?: string,
-  opts: { idleTtlSeconds?: number; touchIntervalSeconds?: number } = {},
+  opts: { idleTtlSeconds?: number; touchIntervalSeconds?: number; graceSeconds?: number } = {},
 ): Promise<ResolvedPrincipal | null> {
   const idleTtl = opts.idleTtlSeconds ?? 0;
   const touchInterval = opts.touchIntervalSeconds ?? 60;
+  const grace = opts.graceSeconds ?? 0;
   const tokenHash = hashToken(token);
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT set_config('app.is_auth', 'true', true)`);
@@ -79,6 +84,11 @@ export async function resolvePrincipal(
     const session = rows[0];
     if (!session) return null;
     if (session.revoked) return null;
+    // A rotated session is accepted only within its short grace window (covers
+    // parallel in-flight requests); afterwards the old token is dead.
+    if (session.replacedBy && session.rotatedAt) {
+      if (grace <= 0 || now.getTime() > session.rotatedAt.getTime() + grace * 1000) return null;
+    }
     if (now > session.expiresAt) return null;
     if (session.signature) {
       if (!signatureSecret) return null;
@@ -111,6 +121,9 @@ export async function resolvePrincipal(
       isAdmin: user.role === "admin",
       isSupervisorAdmin: user.role === "supervisor" || user.role === "admin",
       stepUpAt: session.stepUpAt,
+      sessionId: session.id,
+      sessionCreatedAt: session.createdAt,
+      sessionTokenHash: tokenHash,
     };
   });
 }
@@ -130,22 +143,28 @@ export async function rotateSession(
     expiresAt: Date;
     lastSeenAt?: Date;
     stepUpAt?: Date | null;
+    /** true = hard-revoke the old row now (explicit rotate); false = grace. */
+    immediate?: boolean;
   },
 ): Promise<{ rotated: boolean; newSessionId: string | null }> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT set_config('app.user_id', ${input.userId}, true)`);
-    const revoked = await tx
+    // Mark the old row rotated. `immediate` also revokes it (explicit rotate);
+    // otherwise its token keeps a short grace for periodic rotation.
+    const now = new Date();
+    const claimed = await tx
       .update(userSessions)
-      .set({ revoked: true })
+      .set({ rotatedAt: now, revoked: input.immediate === true })
       .where(
         and(
           eq(userSessions.id, oldSessionId),
           eq(userSessions.userId, input.userId),
           eq(userSessions.revoked, false),
+          isNull(userSessions.replacedBy),
         ),
       )
       .returning({ id: userSessions.id });
-    if (revoked.length === 0) return { rotated: false, newSessionId: null };
+    if (claimed.length === 0) return { rotated: false, newSessionId: null };
     const [row] = await tx
       .insert(userSessions)
       .values({

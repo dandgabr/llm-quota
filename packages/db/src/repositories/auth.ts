@@ -155,13 +155,16 @@ export class PostgresAuthStore {
   }
 
   /**
-   * Verify a raw recovery code by matching its HMAC against every unused code
-   * in constant time (no early return, so timing does not leak the slot), then
-   * consume the matched row atomically (CAS on used_at).
+   * Verify a raw recovery code by matching its versioned HMAC against every
+   * unused code in constant time (no early return), trying MULTIPLE candidate
+   * hashes (current + previous pepper during rotation), then consume the matched
+   * row atomically. Versioning lets a pepper rotate without invalidating codes;
+   * HMAC codes cannot be rehashed without their plaintext, so verification
+   * against the previous pepper is the rotation mechanism.
    */
   async consumeRecoveryCode(
     userId: string,
-    codeHash: string,
+    candidates: string[],
     opts: { db?: DB; equals?: (a: string, b: string) => boolean } = {},
   ): Promise<boolean> {
     const handle = opts.db ?? this.db;
@@ -172,8 +175,10 @@ export class PostgresAuthStore {
       .where(and(eq(mfaRecoveryCodes.userId, userId), isNull(mfaRecoveryCodes.usedAt)));
     let matchedId: string | null = null;
     for (const row of rows) {
-      // Compare all rows (no break) to keep timing independent of the slot.
-      if (equals(row.codeHash, codeHash)) matchedId = row.id;
+      for (const candidate of candidates) {
+        // Compare all rows/candidates (no break) to keep timing independent.
+        if (equals(row.codeHash, candidate)) matchedId = row.id;
+      }
     }
     if (!matchedId) return false;
     const consumed = await handle
@@ -250,6 +255,44 @@ export class PostgresAuthStore {
   async resetLoginAttempts(subjectKey: string, opts: { db?: DB } = {}): Promise<void> {
     const handle = opts.db ?? this.db;
     await handle.delete(authLoginAttempts).where(eq(authLoginAttempts.subjectKey, subjectKey));
+  }
+
+  /**
+   * Record an account-global failure (ip_hash = '', scope = 'account'). This
+   * bucket NEVER locks: it only reports the count so the caller can add a
+   * progressive soft delay (anti distributed brute force without letting an
+   * attacker lock a victim's email).
+   */
+  async recordAccountFailure(subjectKey: string, opts: { db?: DB } = {}): Promise<number> {
+    const handle = opts.db ?? this.db;
+    const res = await handle.execute<{ failed_count: number }>(sql`
+      INSERT INTO auth_login_attempts (subject_key, ip_hash, scope, failed_count, window_started_at, last_failed_at)
+      VALUES (${subjectKey}, '', 'account', 1, now(), now())
+      ON CONFLICT (subject_key, ip_hash) DO UPDATE SET
+        failed_count = CASE
+          WHEN auth_login_attempts.window_started_at > now() - make_interval(secs => 900)
+            THEN auth_login_attempts.failed_count + 1
+          ELSE 1 END,
+        window_started_at = CASE
+          WHEN auth_login_attempts.window_started_at > now() - make_interval(secs => 900)
+            THEN auth_login_attempts.window_started_at
+          ELSE now() END,
+        last_failed_at = now(),
+        updated_at = now()
+      RETURNING failed_count
+    `);
+    return res.rows[0]?.failed_count ?? 1;
+  }
+
+  /** Read the account-global failure count (scope = 'account', ip_hash = ''). */
+  async getAccountFailureCount(subjectKey: string, opts: { db?: DB } = {}): Promise<number> {
+    const handle = opts.db ?? this.db;
+    const [row] = await handle
+      .select({ failedCount: authLoginAttempts.failedCount })
+      .from(authLoginAttempts)
+      .where(and(eq(authLoginAttempts.subjectKey, subjectKey), eq(authLoginAttempts.ipHash, "")))
+      .limit(1);
+    return row?.failedCount ?? 0;
   }
 
   /** Sweep stale throttle rows (collector maintenance). */

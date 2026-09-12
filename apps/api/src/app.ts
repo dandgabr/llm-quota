@@ -203,6 +203,11 @@ function envInt(name: string, def: number, min = 0): number {
   return Number.isFinite(n) && n >= min ? n : def;
 }
 
+/** Await a fixed delay (used for the account-global soft throttle). */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** Create the REST API Hono app. */
 export function createApiApp({
   db,
@@ -234,9 +239,17 @@ export function createApiApp({
     maxSeconds: envInt("LOCKOUT_MAX_SECONDS", 3600, 1),
   };
   const idleTtl = sessionIdleTtlSeconds ?? envInt("SESSION_IDLE_TTL_SECONDS", 1800, 0);
+  // H1 account-global soft delay (no hard lock by email).
+  const accountThreshold = envInt("LOCKOUT_ACCOUNT_THRESHOLD", 50, 0);
+  const accountDelayBaseMs = envInt("LOCKOUT_ACCOUNT_DELAY_MS", 1500, 0);
+  const accountDelayMaxMs = envInt("LOCKOUT_ACCOUNT_DELAY_MAX_MS", 5000, 0);
+  // H2 periodic session rotation + grace for in-flight requests with the old token.
+  const rotateSeconds = envInt("SESSION_ROTATE_SECONDS", 21600, 0);
+  const sessionRotateGraceSeconds = envInt("SESSION_ROTATE_GRACE_SECONDS", 60, 0);
   const authPepper = process.env.AUTH_PEPPER ?? "";
   // Pepper separation: recovery must NOT silently reuse the throttle pepper.
   const recoveryPepper = process.env.RECOVERY_PEPPER ?? "";
+  const recoveryPepperPrevious = process.env.RECOVERY_PEPPER_PREVIOUS ?? "";
   const stepUpTtlSeconds = envInt("STEP_UP_TTL_SECONDS", 300, 0);
   const currentTime = () => now?.() ?? new Date();
   // Fail-closed in production: without a real pepper, throttle keys/recovery
@@ -285,12 +298,28 @@ export function createApiApp({
   const recordFailure = async (
     subjectKey: string,
     ipHash: string,
-  ): Promise<{ failedCount: number; lockedUntil: Date | null }> => {
-    if (!throttle.enabled) return { failedCount: 0, lockedUntil: null };
+  ): Promise<{ failedCount: number; lockedUntil: Date | null; accountDelayMs: number }> => {
+    if (!throttle.enabled) return { failedCount: 0, lockedUntil: null, accountDelayMs: 0 };
     return withRlsContext(
       db.db,
       { userId: "", role: "user", isAdmin: false, isSupervisorAdmin: false },
-      (tx) => authStore.recordLoginFailure(subjectKey, ipHash, throttle, { db: tx }),
+      async (tx) => {
+        const outcome = await authStore.recordLoginFailure(subjectKey, ipHash, throttle, { db: tx });
+        // Account-global bucket (soft signal only; never locks). Adds a
+        // progressive delay against a distributed attack without letting an
+        // attacker lock a victim's email.
+        let accountDelayMs = 0;
+        if (accountThreshold > 0) {
+          const accountCount = await authStore.recordAccountFailure(subjectKey, { db: tx });
+          if (accountCount >= accountThreshold) {
+            accountDelayMs = Math.min(
+              accountDelayBaseMs * (accountCount - accountThreshold + 1),
+              accountDelayMaxMs,
+            );
+          }
+        }
+        return { ...outcome, accountDelayMs };
+      },
       { "app.is_auth_throttle": "true" },
     );
   };
@@ -333,12 +362,37 @@ export function createApiApp({
       // Defense-in-depth: verify the stored HMAC when the server holds the
       // session-signing secret (guards a leaked hash table).
       process.env.SESSION_SECRET || undefined,
-      { idleTtlSeconds: idleTtl },
+      { idleTtlSeconds: idleTtl, graceSeconds: sessionRotateGraceSeconds },
     );
     if (!principal) {
       return problemJson(c, problem(401, "Unauthorized", "Invalid or expired session", "unauthorized"));
     }
     c.set("principal", principal);
+    // H2 periodic rotation: rotate a session older than the configured age and
+    // return the fresh token in a header (the old token keeps a short grace).
+    if (
+      rotateSeconds > 0 &&
+      principal.sessionId &&
+      principal.sessionCreatedAt &&
+      currentTime().getTime() - principal.sessionCreatedAt.getTime() > rotateSeconds * 1000
+    ) {
+      const secret = process.env.SESSION_SECRET ?? "";
+      if (isValidSessionSecret(secret)) {
+        const { token, hash, signature } = issueSessionToken(secret);
+        const expiresAt = new Date(principal.sessionCreatedAt.getTime() + 12 * 3600 * 1000);
+        const rotated = await rotateSession(db.db, principal.sessionId, {
+          userId: principal.userId,
+          tokenHash: hash,
+          signature,
+          expiresAt,
+          stepUpAt: principal.stepUpAt ?? null,
+        });
+        // Never rotate past the absolute expiry.
+        if (rotated.rotated && expiresAt.getTime() > currentTime().getTime()) {
+          c.header("X-Rotated-Session", token);
+        }
+      }
+    }
     await next();
   });
 
@@ -633,6 +687,8 @@ export function createApiApp({
           ),
         { "app.is_audit": "true" },
       );
+      // H1: progressive soft delay for account-wide brute force (no hard lock).
+      if (outcome.accountDelayMs > 0) await sleep(outcome.accountDelayMs);
       return problemJson(c, problem(401, "Unauthorized", "Invalid credentials", "unauthorized"));
     }
     const userId = lookup!.userId;
@@ -704,8 +760,12 @@ export function createApiApp({
         }
         // Recovery is fail-closed: no valid pepper -> config error, never a fallback.
         if (!isValidRecoveryPepper(recoveryPepper)) return { kind: "config" as const };
-        const candidateHash = hashRecoveryCode(code, recoveryPepper, userId);
-        const used = await authStore.consumeRecoveryCode(userId, candidateHash, {
+        // Try the current pepper, plus the previous one during rotation.
+        const candidates = [hashRecoveryCode(code, recoveryPepper, userId, "v1")];
+        if (recoveryPepperPrevious) {
+          candidates.push(hashRecoveryCode(code, recoveryPepperPrevious, userId, "v1"));
+        }
+        const used = await authStore.consumeRecoveryCode(userId, candidates, {
           db: tx,
           equals: constantTimeHashEquals,
         });
@@ -1602,6 +1662,8 @@ export function createApiApp({
       signature,
       expiresAt,
       stepUpAt: p.stepUpAt ?? null,
+      // Explicit rotation is immediate (no grace): the caller gets the new token.
+      immediate: true,
     });
     if (!rotated.rotated) {
       return problemJson(c, problem(409, "Conflict", "Session already rotated", "conflict"));

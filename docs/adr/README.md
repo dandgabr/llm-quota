@@ -24,6 +24,9 @@ and set the old one's status to `superseded by [[decisions/<new>]]`.
 | [ADR-011](ADR-011-design-system-flat-pastel.md)                 | Design system: Engineered Minimal Swiss — flat + mute pastel, anti-AI-slop          | accepted |
 | [ADR-012](ADR-012-production-runtime-wiring-and-hardening.md)   | Production runtime wiring and hardening (collector, app-role pool, CORS, fail-closed dev endpoints) | accepted |
 | [ADR-013](ADR-013-user-management-local-accounts-invites.md)   | User management: local accounts, invites, soft delete, idempotency, same-origin SPA serving          | accepted |
+| [ADR-014](ADR-014-audit-trail-append-only-transactional.md)    | Audit trail: append-only, transactional, sanitized metadata, keyset cursor                           | accepted |
+| [ADR-015](ADR-015-onboarding-first-run-and-invites.md)         | Onboarding: first-run admin bootstrap + invite acceptance via SECURITY DEFINER functions              | accepted |
+| [ADR-016](ADR-016-local-authentication-password-totp-recovery.md) | Local authentication: password + TOTP MFA + recovery codes + break-glass reset                    | accepted |
 
 ## Status legend
 

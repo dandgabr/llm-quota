@@ -85,6 +85,13 @@
       "when": 1789184500000,
       "tag": "0011_auth_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789185000000,
+      "tag": "0012_challenge_owner",
+      "breakpoints": true
     }
   ]
 }

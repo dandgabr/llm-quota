@@ -513,4 +513,161 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
       expect(reuse.status).toBe(410);
     });
   });
+
+  describe("Phase D — authenticated auth endpoints over the wire", () => {
+    let userId: string;
+    let token: string;
+
+    beforeAll(async () => {
+      await resetDatabase(t.super);
+      userId = await seedUser(t.super, { role: "user", email: "d-user@test.local" });
+      await seedUserCredential(t.super, userId, "d-user-password-123");
+      token = "wire-d-user-token";
+      await createSession(t.super.db, {
+        userId,
+        tokenHash: hashToken(token),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+    });
+
+    it("logout revokes the session server-side (subsequent call is 401)", async () => {
+      const login = await fetch(`${base}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "d-user@test.local", password: "d-user-password-123" }),
+      });
+      const { token: sessionToken } = (await login.json()) as { token: string };
+      const logout = await fetch(`${base}/auth/logout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      expect(logout.status).toBe(204);
+      const after = await fetch(`${base}/v1/quotas`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      expect(after.status).toBe(401);
+    });
+
+    it("password change requires the current password and revokes other sessions", async () => {
+      const wrong = await fetch(`${base}/auth/password/change`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: "nope", newPassword: "a-new-password-12" }),
+      });
+      expect(wrong.status).toBe(401);
+      const ok = await fetch(`${base}/auth/password/change`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: "d-user-password-123", newPassword: "a-new-password-12" }),
+      });
+      expect(ok.status).toBe(204);
+      // Old token revoked; the new password logs in.
+      const after = await fetch(`${base}/v1/quotas`, { headers: { Authorization: `Bearer ${token}` } });
+      expect(after.status).toBe(401);
+      const login = await fetch(`${base}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "d-user@test.local", password: "a-new-password-12" }),
+      });
+      expect(login.status).toBe(200);
+    });
+
+    it("MFA enroll -> login requires challenge -> TOTP verifies once", async () => {
+      // Fresh user with a password.
+      const mfaId = await seedUser(t.super, { role: "user", email: "d-mfa@test.local" });
+      await seedUserCredential(t.super, mfaId, "d-mfa-password-123");
+      const enrollToken = "wire-d-mfa-enroll";
+      await createSession(t.super.db, {
+        userId: mfaId,
+        tokenHash: hashToken(enrollToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+      const enroll = await fetch(`${base}/auth/mfa/totp/enroll`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${enrollToken}` },
+      });
+      expect(enroll.status).toBe(200);
+      const { secret } = (await enroll.json()) as { secret: string };
+      // Compute a valid code and verify enrollment.
+      const { generateTotp } = await import("@llm-quota/auth");
+      const code = generateTotp(secret);
+      const verify = await fetch(`${base}/auth/mfa/totp/verify`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${enrollToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      expect(verify.status).toBe(200);
+      const { recoveryCodes } = (await verify.json()) as { recoveryCodes: string[] };
+      expect(recoveryCodes.length).toBeGreaterThan(0);
+
+      // Login now requires MFA.
+      const login = await fetch(`${base}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "d-mfa@test.local", password: "d-mfa-password-123" }),
+      });
+      expect(login.status).toBe(200);
+      const loginBody = (await login.json()) as { status?: string; challenge?: string };
+      expect(loginBody.status).toBe("mfa_required");
+      expect(loginBody.challenge).toBeTruthy();
+
+      // A wrong code fails; then the right code (next window) succeeds once.
+      const wrongCode = await fetch(`${base}/auth/login/mfa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge: loginBody.challenge, code: "000000" }),
+      });
+      expect(wrongCode.status).toBe(401);
+      // Enrollment consumed the current step, so use the next window (anti-replay).
+      const nextWindow = generateTotp(secret, { nowMs: () => Date.now() + 30_000 });
+      const goodCode = await fetch(`${base}/auth/login/mfa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge: loginBody.challenge, code: nextWindow }),
+      });
+      expect(goodCode.status).toBe(200);
+      // The challenge is single-use.
+      const reuse = await fetch(`${base}/auth/login/mfa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge: loginBody.challenge, code: nextWindow }),
+      });
+      expect(reuse.status).toBe(410);
+    });
+
+    it("GET /v1/sessions never exposes token hashes", async () => {
+      const res = await fetch(`${base}/v1/sessions`, { headers: { Authorization: `Bearer ${token}` } });
+      // token may be revoked by an earlier test; seed a fresh one
+      void res;
+      const adminId = await seedUser(t.super, { role: "admin", email: "sess-admin@test.local" });
+      const adminToken = "wire-sess-admin";
+      await createSession(t.super.db, {
+        userId: adminId,
+        tokenHash: hashToken(adminToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+      const ok = await fetch(`${base}/v1/sessions`, { headers: { Authorization: `Bearer ${adminToken}` } });
+      expect(ok.status).toBe(200);
+      const body = (await ok.json()) as { data: Record<string, unknown>[] };
+      for (const s of body.data) {
+        expect(s.tokenHash).toBeUndefined();
+        expect(s.token_hash).toBeUndefined();
+        expect(s.signature).toBeUndefined();
+      }
+    });
+
+    it("GET /v1/audit rejects malformed filters with 400", async () => {
+      const adminId = await seedUser(t.super, { role: "admin", email: "af-admin@test.local" });
+      const adminToken = "wire-af-admin";
+      await createSession(t.super.db, {
+        userId: adminId,
+        tokenHash: hashToken(adminToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+      const res = await fetch(`${base}/v1/audit?actor=not-a-uuid`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.status).toBe(400);
+    });
+  });
 });

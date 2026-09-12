@@ -71,6 +71,12 @@ function toggle(id: string) {
   expanded.value = next;
 }
 
+async function clearFilters() {
+  filters.action = "";
+  filters.targetType = "";
+  await load();
+}
+
 function metadataPairs(meta: Record<string, unknown>): [string, string][] {
   return Object.entries(meta).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]);
 }
@@ -139,7 +145,15 @@ onMounted(() => void load());
         v-if="!events.length"
         class="hint"
       >
-        {{ t("audit.empty") }}
+        {{ filters.action || filters.targetType ? t("audit.emptyFiltered") : t("audit.empty") }}
+        <button
+          v-if="filters.action || filters.targetType"
+          type="button"
+          class="btn-ghost"
+          @click="clearFilters"
+        >
+          {{ t("audit.clearFilters") }}
+        </button>
       </p>
       <ul
         v-else

@@ -87,18 +87,37 @@ export async function resolvePrincipal(
   });
 }
 
-/** List a user's recent sessions (for "active sessions" / revoke UI). */
+/** Safe wire projection of a session (never the token hash or signature). */
+export interface SessionView {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  revoked: boolean;
+}
+
+/** List a user's recent sessions (safe DTO; never leaks hashes/signatures). */
 export async function listSessionsByUser(
   db: DB,
   userId: string,
   limit = 20,
-): Promise<UserSessionRow[]> {
-  return db
-    .select()
+): Promise<SessionView[]> {
+  const rows = await db
+    .select({
+      id: userSessions.id,
+      createdAt: userSessions.createdAt,
+      expiresAt: userSessions.expiresAt,
+      revoked: userSessions.revoked,
+    })
     .from(userSessions)
     .where(eq(userSessions.userId, userId))
     .orderBy(desc(userSessions.createdAt))
     .limit(limit);
+  return rows.map((r) => ({
+    id: r.id,
+    createdAt: r.createdAt.toISOString(),
+    expiresAt: r.expiresAt.toISOString(),
+    revoked: r.revoked,
+  }));
 }
 
 /** Revoke a session (id-scoped), returning the number of rows revoked. */

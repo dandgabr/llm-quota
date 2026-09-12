@@ -37,7 +37,9 @@ function switchLocale(next: "en" | "pt-BR") {
   safeSetItem("llm-quota.locale", next);
 }
 
-function logout() {
+async function logout() {
+  // Best-effort server-side revocation; clear locally regardless.
+  await auth.api()?.logout().catch(() => {});
   auth.logout();
   void router.push({ name: "landing" });
 }
@@ -77,14 +79,14 @@ function logout() {
         </RouterLink>
       </nav>
       <span class="controls">
-        <button class="btn-ghost" type="button" aria-label="Toggle color theme" @click="toggle()">
+        <button class="btn-ghost" type="button" :aria-label="t('app.toggleTheme')" @click="toggle()">
           {{ themeUi.theme === "dark" ? "◐ dark" : "◐ light" }}
         </button>
         <select
           class="locale"
           data-testid="locale-switch"
           :value="ui.locale"
-          aria-label="Language"
+          :aria-label="t('app.language')"
           @change="switchLocale(($event.target as HTMLSelectElement).value as 'en' | 'pt-BR')"
         >
           <option value="en">

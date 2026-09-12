@@ -11,6 +11,8 @@ const t = useTranslator();
 const props = defineProps<{
   /** Email to pre-fill and lock (invite flow); empty for first-admin setup. */
   lockedEmail?: string;
+  /** Invite flow: the server derives the email from the token -> hide the field. */
+  hideEmail?: boolean;
   /** Email is supplied by the server (invite accept) -> don't require it. */
   emailOptional?: boolean;
   submitLabel: string;
@@ -29,7 +31,7 @@ watch(
 );
 
 function validEmail(): boolean {
-  return props.emailOptional || form.email.includes("@");
+  return props.emailOptional || props.hideEmail || form.email.includes("@");
 }
 
 function onSubmit() {
@@ -45,7 +47,7 @@ function onSubmit() {
 
 <template>
   <form @submit.prevent="onSubmit">
-    <label>
+    <label v-if="!hideEmail">
       {{ t("onboarding.email") }}
       <input
         v-model="form.email"

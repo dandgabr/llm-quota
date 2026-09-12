@@ -273,6 +273,11 @@ export class ApiClient {
     return this.handle<void>(await this.http.delete(`${this.base}/v1/connections/${id}`, this.auth()));
   }
 
+  /** Revoke the current session server-side. */
+  async logout(): Promise<void> {
+    return this.handle<void>(await this.http.post(`${this.base}/auth/logout`, "", this.auth()));
+  }
+
   /** History read via the GET alias (SPA compatibility, ADR-008). */
   async readHistory(params: { from?: string; to?: string } = {}): Promise<HistoryPoint[]> {
     const qs = new URLSearchParams();

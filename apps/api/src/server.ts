@@ -105,8 +105,8 @@ const CORS_HEADERS = "Authorization, Content-Type";
  * plus the local dev ports. The origin is echoed only on a match, preflights
  * are answered with the QUERY-capable verb list, and credentials stay off.
  */
-export function corsOnce(webOrigin = "http://localhost:5173") {
-  const allowed = new Set([...DEV_ORIGINS, ...(webOrigin ? [webOrigin] : [])]);
+export function corsOnce(webOrigin = "http://localhost:5173", includeDevOrigins = true) {
+  const allowed = new Set([...(includeDevOrigins ? DEV_ORIGINS : []), ...(webOrigin ? [webOrigin] : [])]);
   return (c: Context, next: Next): Promise<void | Response> => {
     const origin = c.req.header("origin");
     if (origin && allowed.has(origin)) {
@@ -128,6 +128,8 @@ export function securityHeaders(tls: boolean) {
   return (c: Context, next: Next) => {
     if (tls) c.header("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
     c.header("X-Content-Type-Options", "nosniff");
+    // Auth responses carry session tokens: never cache them.
+    if (c.req.path.startsWith("/auth/")) c.header("Cache-Control", "no-store");
     return next();
   };
 }
@@ -309,7 +311,7 @@ export function buildServer(config: ServerConfig): Started {
   root.use("*", securityHeaders(tls));
   root.use("*", bodyLimit());
   root.use("*", rateLimitAuth(30, 60_000, process.env.TRUST_PROXY === "1"));
-  root.use("*", corsOnce(config.webOrigin));
+  root.use("*", corsOnce(config.webOrigin, config.env !== "production"));
   root.use("*", auditLogger(config.logger));
   // SPA static serving must be registered on the ROOT before the API route:
   // mounting inside `app` would put assets behind the bearer middleware. It

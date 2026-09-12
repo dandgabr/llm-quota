@@ -42,7 +42,7 @@ const othersQuota = () => quota.quotas.slice(1);
           v-if="auth.isAuthenticated"
           class="signed"
         >
-          {{ t("auth.login") }} · {{ auth.role }}
+          {{ t("auth.signedInAs") }} · {{ auth.role }}
         </p>
       </div>
     </div>

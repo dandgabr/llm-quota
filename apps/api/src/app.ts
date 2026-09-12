@@ -53,16 +53,25 @@ import {
   verifyTotpWithStep,
 } from "@llm-quota/auth";
 
-type Variables = { principal: ResolvedPrincipal };
+type Variables = { principal: ResolvedPrincipal; requestId: string };
 
 /**
- * Paths served without a bearer token. Matched by SEGMENT (not bare
- * startsWith) so `/authentication-x` is never treated as public.
+ * Public (unauthenticated) auth endpoints — an EXACT allow-list, never a bare
+ * prefix, so the authenticated `/auth/*` routes (logout, password, MFA) still
+ * pass through the bearer middleware.
  */
-const PUBLIC_PATHS = ["/health", "/auth"];
+const PUBLIC_AUTH_PATHS = new Set([
+  "/health",
+  "/auth/setup/status",
+  "/auth/setup",
+  "/auth/invites/accept",
+  "/auth/login",
+  "/auth/login/mfa",
+  "/auth/oidc/authorize",
+]);
 
 function isPublicPath(path: string): boolean {
-  return PUBLIC_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+  return PUBLIC_AUTH_PATHS.has(path) || path.startsWith("/health/");
 }
 
 const GRANULARITIES: Granularity[] = ["daily", "weekly", "monthly"];
@@ -186,10 +195,11 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   // Correlate every request with an audit event + log line. The client may pass
   // X-Request-Id only in a strict charset; otherwise a UUID is generated.
   app.use("*", async (c, next) => {
-    const incoming = c.req.header("x-request-id");
+    const incoming = c.get("requestId");
     const requestId =
       incoming && /^[A-Za-z0-9._-]{8,128}$/.test(incoming) ? incoming : randomUUID();
     c.header("X-Request-Id", requestId);
+    c.set("requestId", requestId);
     await next();
   });
 
@@ -279,6 +289,10 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       return problemJson(c, problem(409, "Conflict", "Instance already initialized", "conflict"));
     }
     const tokenHash = hashToken(body.token);
+    // Cheap token validation BEFORE the expensive KDF (anti-DoS).
+    if (!(await instanceStore.bootstrapValid(tokenHash))) {
+      return problemJson(c, problem(403, "Forbidden", "Invalid or expired setup token", "forbidden"));
+    }
     const passwordHash = await hashPassword(password);
     const newId = await instanceStore.createFirstAdmin({
       tokenHash,
@@ -307,7 +321,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
             actorRole: "admin",
             targetType: "user",
             targetId: newId,
-            requestId: c.req.header("x-request-id"),
+            requestId: c.get("requestId"),
           },
           { db: tx },
         ),
@@ -343,6 +357,16 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       return problemJson(c, problem(400, "Bad Request", "token and password (≥12) required", "invalid_params"));
     }
     const tokenHash = hashToken(token);
+    // Cheap invite validation BEFORE the expensive KDF (anti-DoS).
+    const liveInvite = await withRlsContext(
+      db.db,
+      { userId: "", role: "user", isAdmin: false, isSupervisorAdmin: false },
+      (tx) => inviteStore.findLiveByTokenHash(tokenHash, { db: tx }),
+      { "app.is_invite": "true" },
+    );
+    if (!liveInvite) {
+      return problemJson(c, problem(410, "Gone", "Invite is invalid, expired or already used", "invite_expired"));
+    }
     const passwordHash = await hashPassword(password);
     const userId = await instanceStore.acceptInvite({
       tokenHash,
@@ -371,7 +395,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
             actorRole: role,
             targetType: "user",
             targetId: userId,
-            requestId: c.req.header("x-request-id"),
+            requestId: c.get("requestId"),
           },
           { db: tx },
         ),
@@ -389,7 +413,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   // ---- Authentication (Phase D / ADR-016) ---------------------------------
   // Issue a 12h session for a verified user and audit the success.
   const issueLoginSession = async (
-    c: { req: { header(name: string): string | undefined } },
+    c: { get(name: "requestId"): string },
     userId: string,
     role: Role,
     secret: string,
@@ -416,7 +440,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
             actorUserId: userId,
             actorRole: role,
             targetType: "session",
-            requestId: c.req.header("x-request-id"),
+            requestId: c.get("requestId"),
           },
           { db: tx },
         ),
@@ -458,7 +482,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
               action: "auth.login_failed",
               actorUserId: lookup?.userId ?? null,
               targetType: "session",
-              requestId: c.req.header("x-request-id"),
+              requestId: c.get("requestId"),
             },
             { db: tx },
           ),
@@ -499,47 +523,72 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     if (!challengeId || !code) {
       return problemJson(c, problem(400, "Bad Request", "challenge and code required", "invalid_params"));
     }
-    const result = await withRlsContext(
+    // Resolve the challenge owner (SECURITY DEFINER, outside RLS), then scope
+    // the challenge/recovery/TOTP reads to that user.
+    const owner = await withRlsContext(
       db.db,
       { userId: "", role: "user", isAdmin: false, isSupervisorAdmin: false },
-      async (tx) => {
-        // Load the challenge (must know the user before we can scope).
-        const challenge = await authStore.getChallenge(challengeId, { db: tx });
-        if (!challenge) return { kind: "gone" as const };
-        return { kind: "loaded" as const, userId: challenge.userId };
-      },
-      { "app.is_auth_challenge": "true" },
+      (tx) => authStore.challengeOwner(challengeId, { db: tx }),
     );
-    if (result.kind === "gone") {
+    if (!owner) {
       return problemJson(c, problem(410, "Gone", "Challenge expired or already used", "mfa_required"));
     }
-    const userId = result.userId!;
+    const userId = owner;
+    const MAX_ATTEMPTS = 5;
     const outcome = await withRlsContext(
       db.db,
       { userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
       async (tx) => {
-        const challenge = await authStore.consumeChallenge(challengeId, { db: tx });
-        if (!challenge) return { kind: "gone" as const };
+        const challenge = await authStore.getChallenge(challengeId, { db: tx });
+        if (!challenge || challenge.consumedAt || challenge.expiresAt < new Date()) {
+          return { kind: "gone" as const };
+        }
+        if (challenge.attempts >= MAX_ATTEMPTS) return { kind: "throttled" as const };
         const totp = await authStore.getTotpSecret(userId, { db: tx });
-        // Try TOTP first (CAS on last_used_step), then a recovery code.
+        // Validate BEFORE consuming so a typo does not burn the challenge.
         if (totp?.verified) {
           const verify = verifyTotpWithStep(totp.secret, code, { lastUsedStep: totp.lastUsedStep ?? undefined });
           if (verify.valid && verify.step !== undefined) {
-            await authStore.verifyTotpSecret(userId, verify.step, { db: tx });
+            // Atomic CAS: only consume the step if it is newer than the stored one.
+            const advanced = await authStore.verifyTotpSecret(userId, verify.step, { db: tx });
+            if (!advanced) return { kind: "bad" as const };
+            await authStore.consumeChallenge(challengeId, { db: tx });
             return { kind: "ok" as const };
           }
         }
         const used = await authStore.consumeRecoveryCode(userId, hashToken(code), { db: tx });
-        if (used) return { kind: "ok" as const, recovery: true };
+        if (used) {
+          await authStore.consumeChallenge(challengeId, { db: tx });
+          return { kind: "ok" as const, recovery: true };
+        }
         await authStore.bumpAttempts(challengeId, { db: tx });
         return { kind: "bad" as const };
       },
-      { "app.user_id": userId },
+      { "app.is_auth_challenge": "true", "app.challenge_user_id": userId },
     );
     if (outcome.kind === "gone") {
       return problemJson(c, problem(410, "Gone", "Challenge expired or already used", "mfa_required"));
     }
+    if (outcome.kind === "throttled") {
+      return problemJson(c, problem(429, "Too Many Requests", "Too many attempts", "account_locked"));
+    }
     if (outcome.kind === "bad") {
+      await withRlsContext(
+        db.db,
+        { userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
+        (tx) =>
+          auditStore.record(
+            {
+              action: "auth.login_failed",
+              actorUserId: userId,
+              targetType: "session",
+              metadata: { stage: "mfa" },
+              requestId: c.get("requestId"),
+            },
+            { db: tx },
+          ),
+        { "app.user_id": userId },
+      );
       return problemJson(c, problem(401, "Unauthorized", "Invalid code", "unauthorized"));
     }
     const account = await withRlsContext(
@@ -549,6 +598,24 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       { "app.user_id": userId },
     );
     const role: Role = (account?.role as Role) ?? "user";
+    if (outcome.recovery) {
+      await withRlsContext(
+        db.db,
+        { userId, role, isAdmin: role === "admin", isSupervisorAdmin: role !== "user" },
+        (tx) =>
+          auditStore.record(
+            {
+              action: "mfa.recovery_code_used",
+              actorUserId: userId,
+              actorRole: role,
+              targetType: "user",
+              targetId: userId,
+              requestId: c.get("requestId"),
+            },
+            { db: tx },
+          ),
+      );
+    }
     const session = await issueLoginSession(c, userId, role, secret);
     return c.json(session);
   });
@@ -571,7 +638,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
             actorUserId: p.userId,
             actorRole: p.role,
             targetType: "session",
-            requestId: c.req.header("x-request-id"),
+            requestId: c.get("requestId"),
           },
           { db: tx },
         ),
@@ -623,7 +690,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
             targetType: "user",
             targetId: p.userId,
             metadata: { self: true },
-            requestId: c.req.header("x-request-id"),
+            requestId: c.get("requestId"),
           },
           { db: tx },
         ),
@@ -683,7 +750,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       p,
       (tx) =>
         auditStore.record(
-          { action: "mfa.enrolled", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: p.userId, requestId: c.req.header("x-request-id") },
+          { action: "mfa.enrolled", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: p.userId, requestId: c.get("requestId") },
           { db: tx },
         ),
     );
@@ -706,7 +773,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       p,
       (tx) =>
         auditStore.record(
-          { action: "mfa.disabled", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: p.userId, requestId: c.req.header("x-request-id") },
+          { action: "mfa.disabled", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: p.userId, requestId: c.get("requestId") },
           { db: tx },
         ),
     );
@@ -768,7 +835,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
               targetType: "user",
               targetId: target,
               metadata: { role: body.role },
-              requestId: c.req.header("x-request-id"),
+              requestId: c.get("requestId"),
             },
             { db: tx },
           );
@@ -783,7 +850,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
               actorRole: p.role,
               targetType: "user",
               targetId: target,
-              requestId: c.req.header("x-request-id"),
+              requestId: c.get("requestId"),
             },
             { db: tx },
           );
@@ -832,7 +899,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
               actorRole: p.role,
               targetType: "user",
               targetId: target,
-              requestId: c.req.header("x-request-id"),
+              requestId: c.get("requestId"),
             },
             { db: tx },
           );
@@ -918,7 +985,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
             targetType: "invite",
             targetId: invite.id,
             metadata: { email, role },
-            requestId: c.req.header("x-request-id"),
+            requestId: c.get("requestId"),
           },
           { db: tx },
         );
@@ -957,7 +1024,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
               actorRole: p.role,
               targetType: "invite",
               targetId: inviteId,
-              requestId: c.req.header("x-request-id"),
+              requestId: c.get("requestId"),
             },
             { db: tx },
           );
@@ -989,7 +1056,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       p,
       (tx) =>
         auditStore.record(
-          { action: "mfa.admin_reset", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: target, requestId: c.req.header("x-request-id") },
+          { action: "mfa.admin_reset", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: target, requestId: c.get("requestId") },
           { db: tx },
         ),
     );
@@ -1021,7 +1088,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
               actorRole: p.role,
               targetType: "connection",
               targetId: connId,
-              requestId: c.req.header("x-request-id"),
+              requestId: c.get("requestId"),
             },
             { db: tx },
           );
@@ -1066,7 +1133,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
             targetType: "connection",
             targetId: created.id,
             metadata: { providerKey: created.providerKey },
-            requestId: c.req.header("x-request-id"),
+            requestId: c.get("requestId"),
           },
           { db: tx },
         );
@@ -1116,16 +1183,28 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       return problemJson(c, problem(403, "Forbidden", "Supervisor role required", "forbidden"));
     }
     const q = c.req.query();
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (q.actor && !UUID_RE.test(q.actor)) {
+      return problemJson(c, problem(400, "Bad Request", "actor must be a UUID", "invalid_params"));
+    }
+    const fromDate = q.from ? new Date(q.from) : undefined;
+    const toDate = q.to ? new Date(q.to) : undefined;
+    if ((q.from && Number.isNaN(fromDate!.getTime())) || (q.to && Number.isNaN(toDate!.getTime()))) {
+      return problemJson(c, problem(400, "Bad Request", "from/to must be ISO instants", "invalid_params"));
+    }
+    const rawLimit = q.limit ? Number.parseInt(q.limit, 10) : undefined;
+    const limit = rawLimit !== undefined && !Number.isNaN(rawLimit) ? Math.min(Math.max(1, rawLimit), 200) : 50;
     const cursor = q.cursor;
     let beforeOccurredAt: Date | undefined;
     let beforeId: string | undefined;
     if (cursor) {
       const [ts, id] = cursor.split("|");
       const parsed = ts ? new Date(ts) : null;
-      if (parsed && id && !Number.isNaN(parsed.getTime())) {
-        beforeOccurredAt = parsed;
-        beforeId = id;
+      if (!parsed || Number.isNaN(parsed.getTime()) || !id || !UUID_RE.test(id)) {
+        return problemJson(c, problem(400, "Bad Request", "invalid cursor", "invalid_params"));
       }
+      beforeOccurredAt = parsed;
+      beforeId = id;
     }
     const result = await withRlsContext(
       db.db,
@@ -1136,11 +1215,11 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
             actorUserId: q.actor,
             action: q.action,
             targetType: q.target_type,
-            from: q.from ? new Date(q.from) : undefined,
-            to: q.to ? new Date(q.to) : undefined,
+            from: fromDate,
+            to: toDate,
             beforeOccurredAt,
             beforeId,
-            limit: q.limit ? Number(q.limit) : 50,
+            limit,
           },
           { db: tx },
         ),

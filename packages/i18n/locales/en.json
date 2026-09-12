@@ -2,7 +2,9 @@
   "app": {
     "title": "llm-quota",
     "tagline": "Track your AI subscription quotas",
-    "loading": "Loading…"
+    "loading": "Loading…",
+    "toggleTheme": "Toggle color theme",
+    "language": "Language"
   },
   "landing": {
     "title": "Know exactly where your AI budget goes.",
@@ -38,7 +40,9 @@
     "inviteMissing": "This invite link is missing its token.",
     "inviteExpiredTitle": "This invitation is no longer valid",
     "inviteExpiredBody": "It may have expired or already been used. Ask an administrator for a new link.",
-    "inviteError": "Could not accept the invitation."
+    "inviteError": "Could not accept the invitation.",
+    "invalidSetupCode": "Invalid or expired setup code.",
+    "goToLogin": "Go to sign in"
   },
   "empty": {
     "quotas": "No quota data yet.",
@@ -67,7 +71,9 @@
     "mfa": {
       "totp": "Authenticator app (TOTP)",
       "webauthn": "Passkey / security key"
-    }
+    },
+    "signedInAs": "Signed in",
+    "backToLogin": "Back to sign in"
   },
   "connections": {
     "title": "Provider connections",
@@ -115,7 +121,9 @@
     "details": "Details",
     "hideDetails": "Hide",
     "loadMore": "Load more",
-    "loadError": "Could not load the audit trail."
+    "loadError": "Could not load the audit trail.",
+    "emptyFiltered": "No events match the filters.",
+    "clearFilters": "Clear filters"
   },
   "users": {
     "title": "User management",

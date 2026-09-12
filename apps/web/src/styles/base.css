@@ -83,6 +83,7 @@ html[data-theme="dark"] {
   --rose-300: #5a4646;
   --sky-300: #3a4a60;
   --periwinkle-500: #6f8ff0;
+  --accent-on-accent: #16130f;
   --fern-600: #6fae8c;
   --brick-600: #e37a6a;
   --ochre-600: #d3ab58;
@@ -136,6 +137,7 @@ select {
   font-family: var(--font-body);
   font-size: 14px;
   border-radius: var(--radius-control);
+  min-height: 44px; /* WCAG 2.5.8 target size (ADR-011 §7) */
 }
 
 button,
@@ -230,6 +232,32 @@ select {
   border-color: transparent;
 }
 
+/* Primary action (accent fill, tactile press) — reusable across screens */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-action);
+  color: var(--accent-on-accent);
+  border: none;
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-body);
+  font-size: 14px;
+  min-height: 44px;
+  border-radius: var(--radius-control);
+  box-shadow: 0 2px 0 0 rgba(24, 20, 16, 0.25);
+  cursor: pointer;
+}
+.btn-primary:active {
+  box-shadow: none;
+  transform: translateY(1px);
+}
+
+/* Secondary text under a heading (consistent across screens) */
+.hint {
+  color: var(--text-secondary);
+}
+
 /* Secondary / ghost control: transparent, raises luminance on hover (no shadow) */
 .btn-ghost {
   background: transparent;
@@ -257,6 +285,13 @@ select {
 .btn-ghost:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.btn-ghost.danger {
+  color: var(--status-danger);
+}
+.btn-ghost.danger:hover:not(:disabled) {
+  color: var(--status-danger);
+  border-color: var(--status-danger);
 }
 
 /* Flat loading skeleton: luminance pulse, no blur */

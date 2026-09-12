@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import { PublicApiClient, ApiError } from "../lib/api";
@@ -16,9 +16,15 @@ const code = ref("");
 const challenge = ref("");
 const error = ref<string | null>(null);
 const submitting = ref(false);
+const heading = ref<HTMLElement | null>(null);
 
 const canSubmitCredentials = computed(() => email.value.includes("@") && password.value.length > 0);
 const canSubmitMfa = computed(() => code.value.trim().length > 0);
+
+async function focusHeading() {
+  await nextTick();
+  heading.value?.focus();
+}
 
 async function submitCredentials() {
   if (!canSubmitCredentials.value) return;
@@ -30,13 +36,14 @@ async function submitCredentials() {
     if ("status" in res && res.status === "mfa_required") {
       challenge.value = res.challenge;
       step.value = "mfa";
+      await focusHeading();
       return;
     }
     const session = res as { token: string; user: { role: "user" | "supervisor" | "admin" } };
     auth.login({ token: session.token, role: session.user.role });
     void router.push({ name: "dashboard" });
-  } catch (err) {
-    error.value = err instanceof ApiError ? t("auth.invalidCredentials") : t("errors.generic");
+  } catch {
+    error.value = t("auth.invalidCredentials");
   } finally {
     submitting.value = false;
   }
@@ -51,10 +58,23 @@ async function submitMfa() {
     auth.login({ token: session.token, role: session.user.role });
     void router.push({ name: "dashboard" });
   } catch (err) {
-    error.value = err instanceof ApiError && err.status === 410 ? t("auth.mfaExpired") : t("auth.invalidCode");
+    if (err instanceof ApiError && err.status === 410) {
+      error.value = t("auth.mfaExpired");
+      backToCredentials();
+      return;
+    }
+    error.value = t("auth.invalidCode");
+    code.value = "";
   } finally {
     submitting.value = false;
   }
+}
+
+function backToCredentials() {
+  step.value = "credentials";
+  challenge.value = "";
+  code.value = "";
+  void focusHeading();
 }
 </script>
 
@@ -64,7 +84,10 @@ async function submitMfa() {
     :aria-busy="submitting"
   >
     <span class="micro">{{ t("app.title") }}</span>
-    <h1 tabindex="-1">
+    <h1
+      ref="heading"
+      tabindex="-1"
+    >
       {{ t("auth.login") }}
     </h1>
 
@@ -98,24 +121,35 @@ async function submitMfa() {
     </template>
 
     <template v-else>
-      <p class="hint">
-        {{ t("auth.mfaPrompt") }}
-      </p>
       <form @submit.prevent="submitMfa">
         <label>
           {{ t("auth.mfaCode") }}
           <input
             v-model="code"
-            inputmode="numeric"
             autocomplete="one-time-code"
+            :maxlength="40"
+            aria-describedby="mfa-help"
             required
           >
         </label>
+        <p
+          id="mfa-help"
+          class="hint"
+        >
+          {{ t("auth.mfaPrompt") }}
+        </p>
         <button
           type="submit"
           :disabled="!canSubmitMfa || submitting"
         >
           {{ submitting ? t("app.loading") : t("auth.verify") }}
+        </button>
+        <button
+          type="button"
+          class="btn-ghost"
+          @click="backToCredentials"
+        >
+          {{ t("auth.backToLogin") }}
         </button>
       </form>
     </template>

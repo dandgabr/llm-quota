@@ -7,6 +7,7 @@
  */
 
 import { createRouter, createWebHistory } from "vue-router";
+import { safeGetItem } from "../lib/storage.js";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -85,7 +86,7 @@ export function setSetupRequired(value: boolean): void {
 }
 
 router.beforeEach((to) => {
-  const token = localStorage.getItem("llm-quota.token");
+  const token = safeGetItem("llm-quota.token");
   // First run: everything funnels to /setup except the invite flow.
   if (setupRequired && to.name !== "setup" && to.name !== "invite") {
     return { name: "setup" };
@@ -96,7 +97,7 @@ router.beforeEach((to) => {
     return true;
   }
   if (!token) return { name: "login" };
-  const role = localStorage.getItem("llm-quota.role");
+  const role = safeGetItem("llm-quota.role");
   if (to.meta.requiresAdmin && role !== "admin") return { name: "dashboard" };
   if (to.meta.requiresSupervisor && role !== "admin" && role !== "supervisor") {
     return { name: "dashboard" };

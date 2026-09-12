@@ -14,6 +14,12 @@ import { safeGetItem, safeRemoveItem, safeSetItem } from "../lib/storage";
 const TOKEN_KEY = "llm-quota.token";
 const ROLE_KEY = "llm-quota.role";
 
+/** Handler invoked when the API returns 401 (session invalid/expired). */
+let onUnauthorizedHandler: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: () => void): void {
+  onUnauthorizedHandler = fn;
+}
+
 export interface LoginInput {
   /** Session token as returned by the API login/issuance flow. */
   token: string;
@@ -57,9 +63,16 @@ export const useAuthStore = defineStore("auth", {
       safeRemoveItem(TOKEN_KEY);
       safeRemoveItem(ROLE_KEY);
     },
-    /** API accessor; returns null when unauthenticated. */
+    /** API accessor; returns null when unauthenticated. A 401 clears the session. */
     api(opts?: ApiOptions): ApiClient | null {
-      return this.token ? clientFor(this.token, opts) : null;
+      if (!this.token) return null;
+      return clientFor(this.token, {
+        onUnauthorized: () => {
+          this.logout();
+          onUnauthorizedHandler?.();
+        },
+        ...opts,
+      });
     },
   },
 });

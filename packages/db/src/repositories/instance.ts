@@ -29,6 +29,15 @@ export class PostgresInstanceStore {
     return Boolean(res.rows[0]?.ok);
   }
 
+  /** True when the hash matches the live bootstrap token (cheap pre-check). */
+  async bootstrapValid(hash: string, opts: { db?: DB } = {}): Promise<boolean> {
+    const handle = opts.db ?? this.db;
+    const res = await handle.execute<{ ok: boolean }>(
+      sql`SELECT app_bootstrap_valid(${hash}) AS ok`,
+    );
+    return Boolean(res.rows[0]?.ok);
+  }
+
   /** Atomically consume the bootstrap token; true exactly once. */
   async consumeBootstrap(hash: string, opts: { db?: DB } = {}): Promise<boolean> {
     const handle = opts.db ?? this.db;

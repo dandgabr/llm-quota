@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useTranslator } from "../lib/i18n";
 import { useAuthStore } from "../stores/auth";
 import { ApiError, PublicApiClient } from "../lib/api";
+import { safeGetItem } from "../lib/storage.js";
 import AccountStep from "../components/AccountStep.vue";
 
 const t = useTranslator();
@@ -37,6 +38,7 @@ async function submit(value: { email: string; password: string; firstName: strin
       password: value.password,
       firstName: value.firstName || undefined,
       lastName: value.lastName || undefined,
+      locale: (safeGetItem("llm-quota.locale") as string | null) ?? undefined,
     });
     auth.login({ token: res.token, role: res.user.role });
     done.value = true;
@@ -62,13 +64,19 @@ async function submit(value: { email: string; password: string; firstName: strin
     </div>
 
     <div
-      v-else-if="expired"
+      v-else-if="expired || !inviteToken"
       class="card"
     >
       <h1>{{ t("onboarding.inviteExpiredTitle") }}</h1>
       <p class="hint">
         {{ t("onboarding.inviteExpiredBody") }}
       </p>
+      <RouterLink
+        class="btn-ghost"
+        :to="{ name: 'login' }"
+      >
+        {{ t("onboarding.goToLogin") }}
+      </RouterLink>
     </div>
 
     <div
@@ -81,21 +89,14 @@ async function submit(value: { email: string; password: string; firstName: strin
         {{ t("onboarding.inviteAccountHint") }}
       </p>
       <p
-        v-if="!inviteToken"
-        class="error"
-        role="alert"
-      >
-        {{ t("onboarding.inviteMissing") }}
-      </p>
-      <p
-        v-else-if="error"
+        v-if="error"
         class="error"
         role="alert"
       >
         {{ error }}
       </p>
       <AccountStep
-        v-if="inviteToken"
+        :hide-email="true"
         :email-optional="true"
         :submit-label="t('onboarding.acceptInvite')"
         :busy="busy"

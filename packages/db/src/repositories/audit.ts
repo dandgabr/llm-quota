@@ -47,16 +47,22 @@ export interface AuditView {
 const SECRET_KEY = /(secret|token|password|passwd|hash|authorization|api[_-]?key)/i;
 
 /** Recursively redact secret-looking keys and cap string lengths. */
-export function sanitizeMetadata(input: Record<string, unknown>): Record<string, unknown> {
+export function sanitizeMetadata(input: Record<string, unknown>, depth = 0): Record<string, unknown> {
+  if (depth > 5) return {};
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input)) {
     if (SECRET_KEY.test(k)) continue;
-    if (typeof v === "string") out[k] = v.slice(0, 500);
-    else if (typeof v === "number" || typeof v === "boolean" || v === null) out[k] = v;
-    else if (Array.isArray(v)) out[k] = v.slice(0, 20).map((x) => (typeof x === "string" ? x.slice(0, 200) : x));
-    else if (typeof v === "object") out[k] = sanitizeMetadata(v as Record<string, unknown>);
+    out[k] = sanitizeValue(v, depth);
   }
   return out;
+}
+
+function sanitizeValue(v: unknown, depth: number): unknown {
+  if (typeof v === "string") return v.slice(0, 500);
+  if (typeof v === "number" || typeof v === "boolean" || v === null) return v;
+  if (Array.isArray(v)) return v.slice(0, 20).map((x) => sanitizeValue(x, depth + 1));
+  if (typeof v === "object") return sanitizeMetadata(v as Record<string, unknown>, depth + 1);
+  return undefined;
 }
 
 function toView(row: AuditEventRow): AuditView {

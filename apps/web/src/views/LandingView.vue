@@ -13,7 +13,7 @@ const t = useTranslator();
     </p>
     <div class="cta">
       <RouterLink
-        class="btn-ghost cta-primary"
+        class="btn-primary"
         :to="{ name: 'login' }"
       >
         {{ t("landing.cta") }}
@@ -39,13 +39,5 @@ h1 {
 }
 .cta {
   margin-top: var(--space-6);
-}
-.cta-primary {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  color: var(--accent-on-accent);
-  background: var(--accent-action);
-  border-color: transparent;
 }
 </style>

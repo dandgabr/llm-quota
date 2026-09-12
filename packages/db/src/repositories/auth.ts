@@ -116,13 +116,24 @@ export class PostgresAuthStore {
       .where(eq(totpSecrets.userId, userId));
   }
 
-  /** Mark the TOTP secret verified and persist the consumed step (anti-replay). */
-  async verifyTotpSecret(userId: string, step: number, opts: { db?: DB } = {}): Promise<void> {
+  /**
+   * Mark the TOTP secret verified and advance `last_used_step` atomically.
+   * Returns false when the step is not newer than the stored one (replay/lost
+   * race), so the caller can reject the code.
+   */
+  async verifyTotpSecret(userId: string, step: number, opts: { db?: DB } = {}): Promise<boolean> {
     const handle = opts.db ?? this.db;
-    await handle
+    const rows = await handle
       .update(totpSecrets)
       .set({ verifiedAt: new Date(), lastUsedStep: step })
-      .where(eq(totpSecrets.userId, userId));
+      .where(
+        and(
+          eq(totpSecrets.userId, userId),
+          sql`(${totpSecrets.lastUsedStep} IS NULL OR ${totpSecrets.lastUsedStep} < ${step})`,
+        ),
+      )
+      .returning({ id: totpSecrets.id });
+    return rows.length > 0;
   }
 
   /** Delete a user's TOTP secret (MFA disabled / admin reset). */
@@ -175,6 +186,18 @@ export class PostgresAuthStore {
       .returning({ id: authChallenges.id });
     if (!row) throw new Error("Failed to create challenge");
     return row.id;
+  }
+
+  /**
+   * Resolve a challenge's owner OUTSIDE RLS (SECURITY DEFINER). Needed because
+   * the MFA step must know the user before it can scope `app.challenge_user_id`.
+   */
+  async challengeOwner(id: string, opts: { db?: DB } = {}): Promise<string | null> {
+    const handle = opts.db ?? this.db;
+    const res = await handle.execute<{ user_id: string | null }>(
+      sql`SELECT app_challenge_user(${id}) AS user_id`,
+    );
+    return res.rows[0]?.user_id ?? null;
   }
 
   /**

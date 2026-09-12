@@ -3,8 +3,9 @@ import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useTranslator } from "../lib/i18n";
 import { useAuthStore } from "../stores/auth";
-import { PublicApiClient } from "../lib/api";
+import { ApiError, PublicApiClient } from "../lib/api";
 import { setSetupRequired } from "../router/index.js";
+import { safeGetItem } from "../lib/storage.js";
 import AccountStep from "../components/AccountStep.vue";
 
 const t = useTranslator();
@@ -43,13 +44,20 @@ async function submit(value: { email: string; password: string; firstName: strin
       password: value.password,
       firstName: value.firstName || undefined,
       lastName: value.lastName || undefined,
+      locale: (safeGetItem("llm-quota.locale") as string | null) ?? undefined,
     });
     auth.login({ token: res.token, role: res.user.role });
     setSetupRequired(false);
     done.value = true;
     setTimeout(() => void router.push({ name: "dashboard" }), 800);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : t("onboarding.setupError");
+    if (err instanceof ApiError && err.status === 409) {
+      // Already initialized: send to login.
+      setSetupRequired(false);
+      void router.replace({ name: "login" });
+      return;
+    }
+    error.value = err instanceof ApiError && err.status === 403 ? t("onboarding.invalidSetupCode") : t("onboarding.setupError");
   } finally {
     busy.value = false;
   }

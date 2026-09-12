@@ -2,7 +2,9 @@
   "app": {
     "title": "llm-quota",
     "tagline": "Acompanhe suas cotas de assinaturas de IA",
-    "loading": "Carregando…"
+    "loading": "Carregando…",
+    "toggleTheme": "Alternar tema de cor",
+    "language": "Idioma"
   },
   "landing": {
     "title": "Saiba exatamente para onde vai seu orçamento de IA.",
@@ -39,7 +41,9 @@
     "inviteMissing": "Este link de convite está sem o token.",
     "inviteExpiredTitle": "Este convite não é mais válido",
     "inviteExpiredBody": "Pode ter expirado ou já ter sido usado. Peça um novo link ao administrador.",
-    "inviteError": "Não foi possível aceitar o convite."
+    "inviteError": "Não foi possível aceitar o convite.",
+    "invalidSetupCode": "Código de instalação inválido ou expirado.",
+    "goToLogin": "Ir para o login"
   },
   "empty": {
     "quotas": "Sem dados de cota ainda.",
@@ -68,7 +72,9 @@
     "mfa": {
       "totp": "Aplicativo autenticador (TOTP)",
       "webauthn": "Passkey / chave de segurança"
-    }
+    },
+    "signedInAs": "Sessão",
+    "backToLogin": "Voltar ao login"
   },
   "connections": {
     "title": "Conexões de provedores",
@@ -116,7 +122,9 @@
     "details": "Detalhes",
     "hideDetails": "Ocultar",
     "loadMore": "Carregar mais",
-    "loadError": "Não foi possível carregar a auditoria."
+    "loadError": "Não foi possível carregar a auditoria.",
+    "emptyFiltered": "Nenhum evento corresponde aos filtros.",
+    "clearFilters": "Limpar filtros"
   },
   "users": {
     "title": "Gerenciamento de usuários",

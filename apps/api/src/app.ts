@@ -176,7 +176,13 @@ export function createApiApp({ db, kek, now, enableDevSession }: ApiAppOptions) 
     const expiresInSec = Math.min(Math.max(1, body.expiresInSec ?? 3600), 86_400);
     const { token, hash, signature } = issueSessionToken(secret);
     const expiresAt = new Date(Date.now() + expiresInSec * 1000);
-    await createSession(db.db, { userId: body.userId, tokenHash: hash, signature, expiresAt });
+    // INSERT runs under the target owner's RLS context so the
+    // user_sessions_own WITH CHECK passes on the non-superuser pool.
+    await withRlsContext(
+      db.db,
+      { userId: body.userId, role: "user", isAdmin: false, isSupervisorAdmin: false },
+      (tx) => createSession(tx, { userId: body.userId, tokenHash: hash, signature, expiresAt }),
+    );
     return c.json({ token, expiresAt: expiresAt.toISOString() });
   });
 

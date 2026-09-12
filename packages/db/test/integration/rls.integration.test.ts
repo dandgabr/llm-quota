@@ -8,7 +8,13 @@ import {
 } from "../helpers/db.js";
 import type { TestDb } from "../helpers/db.js";
 import { PostgresHistoryStore } from "../../src/repositories/history.js";
-import { withRlsContext, type ResolvedPrincipal } from "../../src/repositories/sessions.js";
+import {
+  createSession,
+  resolvePrincipal,
+  withRlsContext,
+  type ResolvedPrincipal,
+} from "../../src/repositories/sessions.js";
+import { hashToken } from "@llm-quota/auth";
 import type { Aggregate } from "@llm-quota/core";
 
 let t: TestDb;
@@ -88,5 +94,26 @@ describe("RLS tenant isolation — app role (llmquota_app)", () => {
     const store = new PostgresHistoryStore(t.app.db as never);
     const rows = await store.listByUser(aliceId, "daily", "2026-01-01", "2026-12-31");
     expect(rows.length).toBe(0);
+  });
+
+  it("resolvePrincipal authenticates over the app-role pool via the app.is_auth path", async () => {
+    // Session INSERT under the owner context (matches the issue-session route).
+    const token = "rls-resolve-token-1";
+    const alicePrincipal: ResolvedPrincipal = {
+      userId: aliceId,
+      role: "user",
+      isAdmin: false,
+      isSupervisorAdmin: false,
+    };
+    await withRlsContext(t.app.db, alicePrincipal, (tx) =>
+      createSession(tx as never, {
+        userId: aliceId,
+        tokenHash: hashToken(token),
+        expiresAt: new Date(Date.now() + 3600_000),
+      }),
+    );
+    // Pre-auth resolution (no user GUC yet) must still find the session.
+    const principal = await resolvePrincipal(t.app.db as never, token);
+    expect(principal?.userId).toBe(aliceId);
   });
 });

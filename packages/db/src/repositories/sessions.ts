@@ -36,24 +36,6 @@ export async function createSession(
   return row;
 }
 
-/** Resolve a raw token to a session row by its hash, if valid and not revoked/expired. */
-async function findSessionByToken(
-  db: DB,
-  token: string,
-  now: Date = new Date(),
-): Promise<UserSessionRow | null> {
-  const rows = await db
-    .select()
-    .from(userSessions)
-    .where(eq(userSessions.tokenHash, hashToken(token)))
-    .limit(1);
-  const row = rows[0];
-  if (!row) return null;
-  if (row.revoked) return null;
-  if (now > row.expiresAt) return null;
-  return row;
-}
-
 /**
  * Resolve a raw session token to a `ResolvedPrincipal` by reading the session
  * row and its user's role. Returns null for unknown/revoked/expired sessions.
@@ -61,6 +43,11 @@ async function findSessionByToken(
  * `signatureSecret` (SESSION_SECRET) enables the defense-in-depth HMAC check:
  * when set and the stored signature mismatches the token, the session is
  * rejected (guards a leaked hash table against forged reuse).
+ *
+ * Runs in ONE managed transaction that sets the GUCs the app-role pool needs
+ * under FORCE RLS: `app.is_auth` for the pre-auth token-hash lookup, then
+ * `app.user_id` for the owner read (migration 0003). Under a superuser pool
+ * the policies are no-ops, so tests are unaffected.
  */
 export async function resolvePrincipal(
   db: DB,
@@ -68,24 +55,35 @@ export async function resolvePrincipal(
   now: Date = new Date(),
   signatureSecret?: string,
 ): Promise<ResolvedPrincipal | null> {
-  const session = await findSessionByToken(db, token, now);
-  if (!session) return null;
-  if (session.signature) {
-    if (!signatureSecret) return null;
-    if (!verifySessionToken(token, session.signature, signatureSecret)) return null;
-  }
-  const [user] = await db
-    .select({ role: users.role, isActive: users.isActive })
-    .from(users)
-    .where(eq(users.id, session.userId))
-    .limit(1);
-  if (!user || !user.isActive) return null;
-  return {
-    userId: session.userId,
-    role: user.role as Role,
-    isAdmin: user.role === "admin",
-    isSupervisorAdmin: user.role === "supervisor" || user.role === "admin",
-  };
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.is_auth', 'true', true)`);
+    const rows = await tx
+      .select()
+      .from(userSessions)
+      .where(eq(userSessions.tokenHash, hashToken(token)))
+      .limit(1);
+    const session = rows[0];
+    if (!session) return null;
+    if (session.revoked) return null;
+    if (now > session.expiresAt) return null;
+    if (session.signature) {
+      if (!signatureSecret) return null;
+      if (!verifySessionToken(token, session.signature, signatureSecret)) return null;
+    }
+    await tx.execute(sql`SELECT set_config('app.user_id', ${session.userId}, true)`);
+    const [user] = await tx
+      .select({ role: users.role, isActive: users.isActive })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+    if (!user || !user.isActive) return null;
+    return {
+      userId: session.userId,
+      role: user.role as Role,
+      isAdmin: user.role === "admin",
+      isSupervisorAdmin: user.role === "supervisor" || user.role === "admin",
+    };
+  });
 }
 
 /** List a user's recent sessions (for "active sessions" / revoke UI). */

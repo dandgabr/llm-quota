@@ -6,6 +6,8 @@ import type { DbHandle } from "@llm-quota/db";
 const makeDb = (): DbHandle => {
   const db = {
     transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(db),
+    // set_config calls from resolvePrincipal's RLS context.
+    execute: async () => ({ rows: [] }),
     select: () => ({
       from: () => ({
         where: () => ({

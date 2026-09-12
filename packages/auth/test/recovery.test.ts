@@ -19,10 +19,11 @@ describe("recovery codes (E2)", () => {
     expect(a).not.toBe(b);
   });
 
-  it("hashes with HMAC+pepper, never a raw SHA-256", () => {
+  it("hashes with HMAC+pepper, never a raw SHA-256 (versioned)", () => {
     const code = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     const hashed = hashRecoveryCode(code, PEPPER, USER);
-    expect(hashed).toMatch(/^[0-9a-f]{64}$/);
+    // Versioned: 'v1$<64 hex>'.
+    expect(hashed).toMatch(/^v1\$[0-9a-f]{64}$/);
     expect(hashed).not.toBe(hashToken(code));
     expect(hashRecoveryCode(code, "q".repeat(32), USER)).not.toBe(hashed);
     // The userId is bound into the domain (no cross-user correlation).

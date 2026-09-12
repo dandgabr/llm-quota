@@ -26,6 +26,7 @@ import {
   PostgresHistoryStore,
   PostgresIdempotencyStore,
   PostgresInstanceStore,
+  PostgresAuthStore,
   PostgresQuotaStore,
   type DbHandle,
   type ResolvedPrincipal,
@@ -463,6 +464,23 @@ export function startCollector(
         if (swept) log(`[collector] idempotency: swept ${swept} expired keys`);
       } catch (err) {
         log(`[collector] idempotency sweep error: ${String(err)}`);
+      }
+      // Auth state sweeps: stale login throttle rows, expired challenges and
+      // rotated/expired sessions (E4/E5 retention).
+      try {
+        const authStore = new PostgresAuthStore(db.db, kek);
+        const ttl = Number(process.env.LOGIN_ATTEMPT_TTL_SECONDS ?? 86_400);
+        const attempts = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepLoginAttempts(ttl, now, { db: tx }), {
+          "app.is_collector": "true",
+        });
+        const challenges = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepChallenges(now, { db: tx }), {
+          "app.is_collector": "true",
+        });
+        if (attempts || challenges) {
+          log(`[collector] auth sweep: ${attempts} attempts, ${challenges} challenges`);
+        }
+      } catch (err) {
+        log(`[collector] auth sweep error: ${String(err)}`);
       }
     } catch (err) {
       log(`[collector] pass error: ${String(err)}`);

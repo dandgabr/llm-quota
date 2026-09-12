@@ -174,6 +174,32 @@ export const authChallenges = pgTable(
   }),
 );
 
+/**
+ * Durable login throttle state (E4). Keyed by an HMAC of the normalized email
+ * (never stored in clear) and an optional IP hash, so a distributed brute force
+ * is bounded without enabling account-DoS by email alone.
+ */
+export const authLoginAttempts = pgTable(
+  "auth_login_attempts",
+  {
+    id: id("id"),
+    /** HMAC(AUTH_PEPPER, lower(email)); never the plain email. */
+    subjectKey: varchar("subject_key", { length: 64 }).notNull(),
+    /** HMAC(AUTH_PEPPER, canonical ip); '' = account-global bucket. */
+    ipHash: varchar("ip_hash", { length: 64 }).notNull().default(""),
+    scope: varchar("scope", { length: 16 }).notNull().default("account_ip"),
+    failedCount: integer("failed_count").notNull().default(0),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }),
+    lastFailedAt: timestamp("last_failed_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    keyUnique: uniqueIndex("auth_login_attempts_key_unique").on(t.subjectKey, t.ipHash),
+    sweepIdx: index("auth_login_attempts_sweep_idx").on(t.lastFailedAt),
+  }),
+);
+
 /** Registered OIDC identity providers (Google/GitHub/Discord/SSO future). */
 export const identityProviders = pgTable("identity_providers", {
   id: id("id"),

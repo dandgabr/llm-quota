@@ -12,7 +12,7 @@
  */
 
 import { Hono } from "hono";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { DbHandle } from "@llm-quota/db";
 import {
   PostgresConnectionStore,
@@ -51,6 +51,10 @@ import {
   isValidPassword,
   buildTotpUri,
   verifyTotpWithStep,
+  generateRecoveryCode,
+  hashRecoveryCode,
+  isValidRecoveryPepper,
+  constantTimeHashEquals,
 } from "@llm-quota/auth";
 
 type Variables = { principal: ResolvedPrincipal; requestId: string };
@@ -114,6 +118,16 @@ export interface ApiAppOptions {
   enableDevSession?: boolean;
   /** Public base URL used to build invite links. */
   publicWebUrl?: string;
+  /** Idle session timeout in seconds (0 disables; absolute expiry still applies). */
+  sessionIdleTtlSeconds?: number;
+  /** Login throttle config (E4); defaults come from env. */
+  loginThrottle?: {
+    enabled: boolean;
+    threshold: number;
+    windowSeconds: number;
+    baseSeconds: number;
+    maxSeconds: number;
+  };
 }
 
 type ProblemTypeKey = keyof typeof PROBLEM_TYPES;
@@ -179,7 +193,15 @@ function windowBound(granularity: Granularity, value: string): string | null {
 }
 
 /** Create the REST API Hono app. */
-export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: ApiAppOptions) {
+export function createApiApp({
+  db,
+  kek,
+  now,
+  enableDevSession,
+  publicWebUrl,
+  sessionIdleTtlSeconds,
+  loginThrottle,
+}: ApiAppOptions) {
   const app = new Hono<{ Variables: Variables }>();
   const connStore = new PostgresConnectionStore(db.db, kek ?? parseKekFromEnv());
   const historyStore = new PostgresHistoryStore(db.db);
@@ -191,6 +213,77 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   const instanceStore = new PostgresInstanceStore(db.db);
   const authStore = new PostgresAuthStore(db.db, kek ?? parseKekFromEnv());
   const webBase = publicWebUrl ?? process.env.PUBLIC_WEB_URL ?? "";
+
+  // E4 login throttle config (env by default; override for tests).
+  const throttle = loginThrottle ?? {
+    enabled: process.env.LOCKOUT_ENABLED !== "0",
+    threshold: Number(process.env.LOCKOUT_IP_THRESHOLD ?? 5),
+    windowSeconds: Number(process.env.LOCKOUT_WINDOW_SECONDS ?? 900),
+    baseSeconds: Number(process.env.LOCKOUT_BASE_SECONDS ?? 30),
+    maxSeconds: Number(process.env.LOCKOUT_MAX_SECONDS ?? 3600),
+  };
+  const idleTtl = sessionIdleTtlSeconds ?? Number(process.env.SESSION_IDLE_TTL_SECONDS ?? 1800);
+  const authPepper = process.env.AUTH_PEPPER ?? "";
+  const recoveryPepper = process.env.RECOVERY_PEPPER ?? process.env.AUTH_PEPPER ?? "";
+  const stepUpTtlSeconds = Number(process.env.STEP_UP_TTL_SECONDS ?? 300);
+  const currentTime = () => now?.() ?? new Date();
+
+  /** HMAC the normalized subject (email) with the auth pepper for the throttle key. */
+  const createHmacKey = (domain: string, value: string): string => {
+    const pepper = authPepper || "dev-only-insecure-pepper-change-me";
+    return createHmac("sha256", pepper).update(`${domain}\u0000${value}`).digest("hex");
+  };
+  const subjectKeyFor = (email: string): string =>
+    createHmacKey("subject", email.trim().toLowerCase());
+  const ipHashFor = (ip: string): string => createHmacKey("ip", ip);
+  const clientIp = (c: { req: { header(n: string): string | undefined }; env: unknown }): string => {
+    const trust = process.env.TRUST_PROXY === "1";
+    const forwarded = trust
+      ? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip")
+      : undefined;
+    return (
+      forwarded ||
+      (c.env as { incoming?: { socket?: { remoteAddress?: string } } })?.incoming?.socket?.remoteAddress ||
+      "unknown"
+    );
+  };
+
+  /** True when a successful password check should be refused by the lockout. */
+  const isLocked = async (subjectKey: string, ipHash: string): Promise<Date | null> => {
+    if (!throttle.enabled) return null;
+    const row = await withRlsContext(
+      db.db,
+      { userId: "", role: "user", isAdmin: false, isSupervisorAdmin: false },
+      (tx) => authStore.getLoginAttempt(subjectKey, ipHash, { db: tx }),
+      { "app.is_auth_throttle": "true" },
+    );
+    if (!row?.lockedUntil) return null;
+    return row.lockedUntil > currentTime() ? row.lockedUntil : null;
+  };
+
+  const recordFailure = async (
+    subjectKey: string,
+    ipHash: string,
+  ): Promise<{ failedCount: number; lockedUntil: Date | null }> => {
+    if (!throttle.enabled) return { failedCount: 0, lockedUntil: null };
+    return withRlsContext(
+      db.db,
+      { userId: "", role: "user", isAdmin: false, isSupervisorAdmin: false },
+      (tx) => authStore.recordLoginFailure(subjectKey, ipHash, throttle, { db: tx }),
+      { "app.is_auth_throttle": "true" },
+    );
+  };
+
+  const resetFailures = async (subjectKey: string): Promise<void> => {
+    if (!throttle.enabled) return;
+    await withRlsContext(
+      db.db,
+      { userId: "", role: "user", isAdmin: false, isSupervisorAdmin: false },
+      (tx) => authStore.resetLoginAttempts(subjectKey, { db: tx }),
+      { "app.is_auth_throttle": "true" },
+    );
+  };
+
 
   // Correlate every request with an audit event + log line. The client may pass
   // X-Request-Id only in a strict charset; otherwise a UUID is generated.
@@ -219,6 +312,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       // Defense-in-depth: verify the stored HMAC when the server holds the
       // session-signing secret (guards a leaked hash table).
       process.env.SESSION_SECRET || undefined,
+      { idleTtlSeconds: idleTtl },
     );
     if (!principal) {
       return problemJson(c, problem(401, "Unauthorized", "Invalid or expired session", "unauthorized"));
@@ -417,13 +511,16 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     userId: string,
     role: Role,
     secret: string,
+    opts: { stepUp?: boolean } = {},
   ): Promise<{ token: string; expiresAt: string; user: unknown }> => {
     const { token, hash, signature } = issueSessionToken(secret);
     const expiresAt = new Date(Date.now() + 12 * 3600 * 1000);
+    // A completed password+MFA login counts as a step-up for sensitive actions.
+    const stepUpAt = opts.stepUp === false ? null : new Date();
     await withRlsContext(
       db.db,
       { userId, role, isAdmin: role === "admin", isSupervisorAdmin: role !== "user" },
-      (tx) => createSession(tx, { userId, tokenHash: hash, signature, expiresAt }),
+      (tx) => createSession(tx, { userId, tokenHash: hash, signature, expiresAt, stepUpAt }),
     );
     const user = await withRlsContext(
       db.db,
@@ -462,6 +559,9 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     if (!email || !password) {
       return problemJson(c, problem(400, "Bad Request", "email and password required", "invalid_params"));
     }
+    const subjectKey = subjectKeyFor(email);
+    const ipHash = ipHashFor(clientIp(c));
+    const lockedUntil = await isLocked(subjectKey, ipHash);
     // Pre-auth lookup under app.is_auth + app.auth_email.
     const lookup = await withRlsContext(
       db.db,
@@ -470,18 +570,42 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       { "app.is_auth": "true", "app.auth_email": email },
     );
     const okUser = lookup && lookup.isActive && !lookup.deletedAt && lookup.passwordHash;
-    const passwordOk = okUser ? await verifyPassword(password, lookup!.passwordHash!) : false;
-    if (!okUser) await dummyVerify(password); // uniform timing (anti-enumeration)
-    if (!okUser || !passwordOk) {
+    // Always derive once (uniform timing) — even when locked or unknown.
+    let passwordOk = false;
+    if (lookup?.passwordHash) passwordOk = await verifyPassword(password, lookup.passwordHash);
+    else await dummyVerify(password);
+    // Lockout short-circuits AFTER the derivation so timing stays uniform.
+    if (lockedUntil) {
       await withRlsContext(
         db.db,
         { userId: lookup?.userId ?? "", role: "user", isAdmin: false, isSupervisorAdmin: false },
         (tx) =>
           auditStore.record(
             {
-              action: "auth.login_failed",
+              action: "auth.login_blocked",
               actorUserId: lookup?.userId ?? null,
               targetType: "session",
+              metadata: { retry_after_s: Math.max(1, Math.ceil((lockedUntil.getTime() - currentTime().getTime()) / 1000)) },
+              requestId: c.get("requestId"),
+            },
+            { db: tx },
+          ),
+        { "app.is_audit": "true" },
+      );
+      return problemJson(c, problem(401, "Unauthorized", "Invalid credentials", "unauthorized"));
+    }
+    if (!okUser || !passwordOk) {
+      const outcome = await recordFailure(subjectKey, ipHash);
+      await withRlsContext(
+        db.db,
+        { userId: lookup?.userId ?? "", role: "user", isAdmin: false, isSupervisorAdmin: false },
+        (tx) =>
+          auditStore.record(
+            {
+              action: outcome.lockedUntil ? "auth.lockout_triggered" : "auth.login_failed",
+              actorUserId: lookup?.userId ?? null,
+              targetType: "session",
+              metadata: { failed_count: outcome.failedCount },
               requestId: c.get("requestId"),
             },
             { db: tx },
@@ -505,7 +629,8 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       );
       return c.json({ status: "mfa_required", methods: ["totp", "recovery"], challenge: challengeId });
     }
-    // No MFA: issue the session.
+    // No MFA: reset the throttle and issue the session.
+    await resetFailures(subjectKey);
     const session = await issueLoginSession(c, userId, lookup!.role as Role, secret);
     return c.json(session);
   });
@@ -556,7 +681,13 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
             return { kind: "ok" as const };
           }
         }
-        const used = await authStore.consumeRecoveryCode(userId, hashToken(code), { db: tx });
+        // Recovery is fail-closed: no valid pepper -> config error, never a fallback.
+        if (!isValidRecoveryPepper(recoveryPepper)) return { kind: "config" as const };
+        const candidateHash = hashRecoveryCode(code, recoveryPepper, userId);
+        const used = await authStore.consumeRecoveryCode(userId, candidateHash, {
+          db: tx,
+          equals: constantTimeHashEquals,
+        });
         if (used) {
           await authStore.consumeChallenge(challengeId, { db: tx });
           return { kind: "ok" as const, recovery: true };
@@ -566,6 +697,9 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       },
       { "app.is_auth_challenge": "true", "app.challenge_user_id": userId },
     );
+    if (outcome.kind === "config") {
+      return problemJson(c, problem(500, "Server Error", "Recovery is not configured", "internal"));
+    }
     if (outcome.kind === "gone") {
       return problemJson(c, problem(410, "Gone", "Challenge expired or already used", "mfa_required"));
     }
@@ -616,6 +750,8 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
           ),
       );
     }
+    // Full MFA success clears the login throttle for this subject.
+    await resetFailures(subjectKeyFor(account?.email ?? ""));
     const session = await issueLoginSession(c, userId, role, secret);
     return c.json(session);
   });
@@ -698,13 +834,59 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     return c.body(null, 204);
   });
 
-  // MFA enrollment (authenticated).
+  // E3 step-up: sensitive MFA operations require the current password (or a
+  // recent step-up within STEP_UP_TTL_SECONDS). Never derived from the client.
+  const requireStepUp = async (
+    c: { get(name: "principal"): ResolvedPrincipal; get(name: "requestId"): string },
+    p: ResolvedPrincipal,
+    currentPassword: string | undefined,
+  ): Promise<{ ok: true } | { ok: false; status: number; problem: Problem }> => {
+    const recent =
+      p.stepUpAt && currentTime().getTime() - p.stepUpAt.getTime() <= stepUpTtlSeconds * 1000;
+    if (recent) return { ok: true };
+    if (!currentPassword) {
+      return { ok: false, status: 400, problem: problem(400, "Bad Request", "currentPassword required", "invalid_params") };
+    }
+    const stored = await withRlsContext(
+      db.db,
+      p,
+      (tx) => userStore.getPasswordHash(p.userId, { db: tx }),
+      { "app.is_self_password_change": "true" },
+    );
+    const ok = stored ? await verifyPassword(currentPassword, stored) : false;
+    if (!ok) {
+      await dummyVerify(currentPassword);
+      await withRlsContext(
+        db.db,
+        p,
+        (tx) =>
+          auditStore.record(
+            { action: "auth.step_up_failed", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: p.userId, requestId: c.get("requestId") },
+            { db: tx },
+          ),
+      );
+      return { ok: false, status: 401, problem: problem(401, "Unauthorized", "Password is incorrect", "unauthorized") };
+    }
+    return { ok: true };
+  };
+
+  // MFA enrollment (authenticated; step-up required).
   app.post("/auth/mfa/totp/enroll", async (c) => {
     const p = c.get("principal");
+    const body = await c.req.json<{ currentPassword?: string }>().catch(() => null);
+    const gate = await requireStepUp(c, p, body?.currentPassword);
+    if (!gate.ok) return problemJson(c, gate.problem);
     const secret = generateTotpSecret();
-    await withRlsContext(db.db, p, (tx) => authStore.setTotpSecret(p.userId, secret, { db: tx }), {
-      "app.is_self_password_change": "true",
-    });
+    await withRlsContext(
+      db.db,
+      p,
+      async (tx) => {
+        await authStore.setTotpSecret(p.userId, secret, { db: tx });
+        // A new enrollment invalidates any old recovery codes.
+        await authStore.setRecoveryCodes(p.userId, [], { db: tx });
+      },
+      { "app.is_self_password_change": "true" },
+    );
     const uri = buildTotpUri({
       secretBase64Url: secret,
       accountName: p.userId,
@@ -718,6 +900,9 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     const body = await c.req.json<{ code?: string }>().catch(() => null);
     const code = (body?.code ?? "").trim();
     if (!code) return problemJson(c, problem(400, "Bad Request", "code required", "invalid_params"));
+    if (!isValidRecoveryPepper(recoveryPepper)) {
+      return problemJson(c, problem(500, "Server Error", "Recovery is not configured", "internal"));
+    }
     const result = await withRlsContext(
       db.db,
       p,
@@ -726,7 +911,8 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
         if (!totp) return { kind: "no_secret" as const };
         const verify = verifyTotpWithStep(totp.secret, code, { lastUsedStep: totp.lastUsedStep ?? undefined });
         if (!verify.valid || verify.step === undefined) return { kind: "bad" as const };
-        await authStore.verifyTotpSecret(p.userId, verify.step, { db: tx });
+        const advanced = await authStore.verifyTotpSecret(p.userId, verify.step, { db: tx });
+        if (!advanced) return { kind: "bad" as const };
         return { kind: "ok" as const };
       },
       { "app.is_self_password_change": "true" },
@@ -737,12 +923,17 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     if (result.kind === "bad") {
       return problemJson(c, problem(401, "Unauthorized", "Invalid code", "unauthorized"));
     }
-    // Generate recovery codes (shown once).
-    const codes = Array.from({ length: 10 }, () => issueInviteToken().token.slice(0, 14));
+    // Generate high-entropy recovery codes (shown once, HMAC+pepper at rest).
+    const codes = Array.from({ length: 10 }, () => generateRecoveryCode());
     await withRlsContext(
       db.db,
       p,
-      (tx) => authStore.setRecoveryCodes(p.userId, codes.map((c2) => hashToken(c2)), { db: tx }),
+      (tx) =>
+        authStore.setRecoveryCodes(
+          p.userId,
+          codes.map((code2) => hashRecoveryCode(code2, recoveryPepper, p.userId)),
+          { db: tx },
+        ),
       { "app.is_self_password_change": "true" },
     );
     await withRlsContext(
@@ -757,8 +948,50 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     return c.json({ ok: true, recoveryCodes: codes });
   });
 
+  app.post("/auth/mfa/recovery-codes/regenerate", async (c) => {
+    const p = c.get("principal");
+    const body = await c.req.json<{ currentPassword?: string }>().catch(() => null);
+    const gate = await requireStepUp(c, p, body?.currentPassword);
+    if (!gate.ok) return problemJson(c, gate.problem);
+    if (!isValidRecoveryPepper(recoveryPepper)) {
+      return problemJson(c, problem(500, "Server Error", "Recovery is not configured", "internal"));
+    }
+    const totp = await withRlsContext(db.db, p, (tx) => authStore.getTotpSecret(p.userId, { db: tx }));
+    if (!totp?.verified) {
+      return problemJson(c, problem(409, "Conflict", "Enroll MFA before generating recovery codes", "conflict"));
+    }
+    const codes = Array.from({ length: 10 }, () => generateRecoveryCode());
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        authStore.setRecoveryCodes(
+          p.userId,
+          codes.map((code2) => hashRecoveryCode(code2, recoveryPepper, p.userId)),
+          { db: tx },
+        ),
+      { "app.is_self_password_change": "true" },
+    );
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.record(
+          { action: "mfa.recovery_codes_regenerated", actorUserId: p.userId, actorRole: p.role, targetType: "user", targetId: p.userId, requestId: c.get("requestId") },
+          { db: tx },
+        ),
+    );
+    return c.json({ recoveryCodes: codes });
+  });
+
   app.delete("/auth/mfa/totp", async (c) => {
     const p = c.get("principal");
+    // DELETE bodies are unreliable through proxies: accept the step-up password
+    // via header as a fallback.
+    const body = await c.req.json<{ currentPassword?: string }>().catch(() => null);
+    const stepUpPassword = body?.currentPassword ?? c.req.header("x-step-up-password");
+    const gate = await requireStepUp(c, p, stepUpPassword);
+    if (!gate.ok) return problemJson(c, gate.problem);
     await withRlsContext(
       db.db,
       p,
@@ -1040,6 +1273,9 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   app.delete("/v1/admin/users/:id/mfa", async (c) => {
     const p = requireAdmin(c);
     if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
+    const body = await c.req.json<{ currentPassword?: string }>().catch(() => null);
+    const gate = await requireStepUp(c, p, body?.currentPassword);
+    if (!gate.ok) return problemJson(c, gate.problem);
     const target = c.req.param("id");
     await withRlsContext(
       db.db,

@@ -60,6 +60,12 @@ async function logout() {
         <RouterLink to="/connections">{{ t("nav.connections") }}</RouterLink>
         <RouterLink to="/history">{{ t("nav.history") }}</RouterLink>
         <RouterLink
+          v-if="auth.isAuthenticated"
+          to="/settings"
+        >
+          {{ t("nav.settings") }}
+        </RouterLink>
+        <RouterLink
           v-if="auth.isAdmin"
           to="/admin"
         >

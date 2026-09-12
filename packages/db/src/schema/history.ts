@@ -27,6 +27,12 @@ export const userSessions = pgTable("user_sessions", {
   /** HMAC-SHA256 of the raw token (defense-in-depth vs a leaked hash table). */
   signature: varchar("signature", { length: 128 }),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  /** Last observed activity (idle timeout); touched at most once per throttle. */
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  /** When the current step-up reauthentication happened (E3 sensitive actions). */
+  stepUpAt: timestamp("step_up_at", { withTimezone: true }),
+  /** Rotation lineage: the session this one replaced (audit). */
+  replacedBy: uuid("replaced_by"),
   revoked: boolean("revoked").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

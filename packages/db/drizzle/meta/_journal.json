@@ -92,6 +92,20 @@
       "when": 1789185000000,
       "tag": "0012_challenge_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789188898543,
+      "tag": "0013_auth_lockout_session_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789187000000,
+      "tag": "0014_auth_lockout_session_policies",
+      "breakpoints": true
     }
   ]
 }

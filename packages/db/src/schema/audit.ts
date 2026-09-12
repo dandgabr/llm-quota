@@ -30,12 +30,17 @@ export const auditActionEnum = pgEnum("audit_action", [
   "auth.setup_completed",
   "auth.login_succeeded",
   "auth.login_failed",
+  "auth.login_blocked",
+  "auth.lockout_triggered",
+  "auth.step_up_failed",
   "auth.logout",
   "mfa.enrolled",
   "mfa.disabled",
   "mfa.recovery_code_used",
+  "mfa.recovery_codes_regenerated",
   "mfa.admin_reset",
   "session.revoked",
+  "session.rotated",
   "system.retention",
 ]);
 

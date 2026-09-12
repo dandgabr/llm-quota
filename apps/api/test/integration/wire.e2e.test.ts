@@ -36,6 +36,8 @@ beforeAll(async () => {
   // The dev-session gate now fails closed: opt in explicitly (non-production).
   process.env.SESSION_SECRET = "s".repeat(32);
   process.env.ENABLE_DEV_SESSION = "1";
+  process.env.AUTH_PEPPER = "a".repeat(32);
+  process.env.RECOVERY_PEPPER = "r".repeat(32);
   t = await setupTestDb({ migrate: true });
   await resetDatabase(t.super);
   aliceId = await seedUser(t.super, { role: "user", email: "wire@test.local" });
@@ -584,10 +586,18 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
       });
       const enroll = await fetch(`${base}/auth/mfa/totp/enroll`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${enrollToken}` },
+        headers: { Authorization: `Bearer ${enrollToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: "d-mfa-password-123" }),
       });
       expect(enroll.status).toBe(200);
       const { secret } = (await enroll.json()) as { secret: string };
+      // Step-up is required: without the current password the enroll is denied.
+      const noStepUp = await fetch(`${base}/auth/mfa/totp/enroll`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${enrollToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(noStepUp.status).toBe(400);
       // Compute a valid code and verify enrollment.
       const { generateTotp } = await import("@llm-quota/auth");
       const code = generateTotp(secret);

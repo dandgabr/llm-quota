@@ -298,6 +298,53 @@ export class ApiClient {
     return body.data ?? [];
   }
 
+  // ---- Account security (E3) ----------------------------------------------
+
+  async enrollTotp(currentPassword: string): Promise<{ secret: string; uri: string }> {
+    return this.handle<{ secret: string; uri: string }>(
+      await this.http.post(`${this.base}/auth/mfa/totp/enroll`, JSON.stringify({ currentPassword }), {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
+  async verifyTotp(code: string): Promise<{ ok: boolean; recoveryCodes: string[] }> {
+    return this.handle<{ ok: boolean; recoveryCodes: string[] }>(
+      await this.http.post(`${this.base}/auth/mfa/totp/verify`, JSON.stringify({ code }), {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
+  async disableTotp(currentPassword: string): Promise<void> {
+    return this.handle<void>(
+      await this.http.delete(`${this.base}/auth/mfa/totp`, {
+        ...this.auth(),
+        "X-Step-Up-Password": currentPassword,
+      }),
+    );
+  }
+
+  async regenerateRecoveryCodes(currentPassword: string): Promise<{ recoveryCodes: string[] }> {
+    return this.handle<{ recoveryCodes: string[] }>(
+      await this.http.post(`${this.base}/auth/mfa/recovery-codes/regenerate`, JSON.stringify({ currentPassword }), {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    return this.handle<void>(
+      await this.http.post(`${this.base}/auth/password/change`, JSON.stringify({ currentPassword, newPassword }), {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
   // ---- User management (admin) --------------------------------------------
 
   async listUsers(): Promise<UserView[]> {

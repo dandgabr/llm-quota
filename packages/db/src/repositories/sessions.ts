@@ -24,12 +24,22 @@ export interface ResolvedPrincipal {
   role: Role;
   isAdmin: boolean;
   isSupervisorAdmin: boolean;
+  /** When the current session last passed a step-up reauthentication. */
+  stepUpAt?: Date | null;
 }
 
 /** Create a new user session row for an issued token hash. */
 export async function createSession(
   db: DB,
-  input: { userId: string; tokenHash: string; expiresAt: Date; signature?: string },
+  input: {
+    userId: string;
+    tokenHash: string;
+    expiresAt: Date;
+    signature?: string;
+    lastSeenAt?: Date;
+    stepUpAt?: Date | null;
+    replacedBy?: string | null;
+  },
 ): Promise<UserSessionRow> {
   const [row] = await db.insert(userSessions).values(input).returning();
   if (!row) throw new Error("Failed to create session");
@@ -54,13 +64,17 @@ export async function resolvePrincipal(
   token: string,
   now: Date = new Date(),
   signatureSecret?: string,
+  opts: { idleTtlSeconds?: number; touchIntervalSeconds?: number } = {},
 ): Promise<ResolvedPrincipal | null> {
+  const idleTtl = opts.idleTtlSeconds ?? 0;
+  const touchInterval = opts.touchIntervalSeconds ?? 60;
+  const tokenHash = hashToken(token);
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT set_config('app.is_auth', 'true', true)`);
     const rows = await tx
       .select()
       .from(userSessions)
-      .where(eq(userSessions.tokenHash, hashToken(token)))
+      .where(eq(userSessions.tokenHash, tokenHash))
       .limit(1);
     const session = rows[0];
     if (!session) return null;
@@ -69,6 +83,18 @@ export async function resolvePrincipal(
     if (session.signature) {
       if (!signatureSecret) return null;
       if (!verifySessionToken(token, session.signature, signatureSecret)) return null;
+    }
+    // Idle timeout: reject a session untouched beyond the TTL.
+    if (idleTtl > 0 && now.getTime() - session.lastSeenAt.getTime() > idleTtl * 1000) {
+      return null;
+    }
+    // Touch last_seen_at, throttled, under the scoped GUC (pre-principal write).
+    if (now.getTime() - session.lastSeenAt.getTime() >= touchInterval * 1000) {
+      await tx.execute(sql`SELECT set_config('app.is_session_touch', 'true', true)`);
+      await tx.execute(sql`SELECT set_config('app.session_touch_hash', ${tokenHash}, true)`);
+      await tx.execute(
+        sql`UPDATE user_sessions SET last_seen_at = ${now} WHERE token_hash = ${tokenHash} AND revoked = false AND expires_at > now()`,
+      );
     }
     await tx.execute(sql`SELECT set_config('app.user_id', ${session.userId}, true)`);
     const [user] = await tx
@@ -83,7 +109,53 @@ export async function resolvePrincipal(
       role: user.role as Role,
       isAdmin: user.role === "admin",
       isSupervisorAdmin: user.role === "supervisor" || user.role === "admin",
+      stepUpAt: session.stepUpAt,
     };
+  });
+}
+
+/**
+ * Rotate a session: revoke the old row and insert its replacement in ONE
+ * transaction. The `UPDATE ... WHERE revoked = false RETURNING` gate makes the
+ * rotation race-safe (only one concurrent caller wins).
+ */
+export async function rotateSession(
+  db: DB,
+  oldSessionId: string,
+  input: {
+    userId: string;
+    tokenHash: string;
+    signature?: string;
+    expiresAt: Date;
+    lastSeenAt?: Date;
+    stepUpAt?: Date | null;
+  },
+): Promise<{ rotated: boolean; newSessionId: string | null }> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.user_id', ${input.userId}, true)`);
+    const revoked = await tx
+      .update(userSessions)
+      .set({ revoked: true })
+      .where(and(eq(userSessions.id, oldSessionId), eq(userSessions.revoked, false)))
+      .returning({ id: userSessions.id });
+    if (revoked.length === 0) return { rotated: false, newSessionId: null };
+    const [row] = await tx
+      .insert(userSessions)
+      .values({
+        userId: input.userId,
+        tokenHash: input.tokenHash,
+        signature: input.signature,
+        expiresAt: input.expiresAt,
+        lastSeenAt: input.lastSeenAt ?? new Date(),
+        stepUpAt: input.stepUpAt ?? null,
+      })
+      .returning({ id: userSessions.id });
+    if (!row) throw new Error("Failed to rotate session");
+    await tx
+      .update(userSessions)
+      .set({ replacedBy: row.id })
+      .where(eq(userSessions.id, oldSessionId));
+    return { rotated: true, newSessionId: row.id };
   });
 }
 
@@ -92,6 +164,7 @@ export interface SessionView {
   id: string;
   createdAt: string;
   expiresAt: string;
+  lastSeenAt: string;
   revoked: boolean;
 }
 
@@ -106,6 +179,7 @@ export async function listSessionsByUser(
       id: userSessions.id,
       createdAt: userSessions.createdAt,
       expiresAt: userSessions.expiresAt,
+      lastSeenAt: userSessions.lastSeenAt,
       revoked: userSessions.revoked,
     })
     .from(userSessions)
@@ -116,6 +190,7 @@ export async function listSessionsByUser(
     id: r.id,
     createdAt: r.createdAt.toISOString(),
     expiresAt: r.expiresAt.toISOString(),
+    lastSeenAt: r.lastSeenAt.toISOString(),
     revoked: r.revoked,
   }));
 }

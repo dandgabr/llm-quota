@@ -187,5 +187,29 @@
     "connectionNotFound": "Conexão não encontrada.",
     "userExists": "Este e-mail já possui uma conta.",
     "invalidEmail": "Informe um e-mail válido."
+  },
+  "settings": {
+    "title": "Configurações da conta",
+    "subtitle": "Gerencie sua senha, autenticação em dois fatores e sessões.",
+    "security": "Segurança",
+    "currentPassword": "Senha atual",
+    "enableMfa": "Ativar autenticação em dois fatores",
+    "disableMfa": "Desativar autenticação em dois fatores",
+    "regenerateCodes": "Regerar códigos de recuperação",
+    "recoveryHint": "Guarde estes códigos de recuperação em local seguro. Cada um serve uma vez; são exibidos só agora.",
+    "enrollHint": "Leia o link otpauth no seu autenticador e informe o código de 6 dígitos.",
+    "otpauthUri": "URL otpauth",
+    "code": "Código de autenticação",
+    "confirm": "Confirmar",
+    "cancel": "Cancelar",
+    "secretLabel": "Segredo",
+    "sessions": "Sessões ativas",
+    "noSessions": "Nenhuma sessão.",
+    "mfaEnabled": "Autenticação em dois fatores ativada.",
+    "mfaDisabled": "Autenticação em dois fatores desativada.",
+    "codesRegenerated": "Códigos de recuperação regerados.",
+    "passwordWrong": "Senha incorreta.",
+    "codeWrong": "Código inválido.",
+    "loadError": "Não foi possível carregar as configurações."
   }
 }

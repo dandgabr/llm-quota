@@ -186,5 +186,29 @@
     "connectionNotFound": "Connection not found.",
     "userExists": "This email already has an account.",
     "invalidEmail": "Enter a valid email address."
+  },
+  "settings": {
+    "title": "Account settings",
+    "subtitle": "Manage your password, two-factor authentication and sessions.",
+    "security": "Security",
+    "currentPassword": "Current password",
+    "enableMfa": "Enable two-factor authentication",
+    "disableMfa": "Disable two-factor authentication",
+    "regenerateCodes": "Regenerate recovery codes",
+    "recoveryHint": "Save these recovery codes somewhere safe. Each can be used once; they are shown only now.",
+    "enrollHint": "Scan the otpauth link with your authenticator app, then enter the 6-digit code.",
+    "otpauthUri": "otpauth URL",
+    "code": "Authentication code",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "secretLabel": "Secret",
+    "sessions": "Active sessions",
+    "noSessions": "No sessions.",
+    "mfaEnabled": "Two-factor authentication enabled.",
+    "mfaDisabled": "Two-factor authentication disabled.",
+    "codesRegenerated": "Recovery codes regenerated.",
+    "passwordWrong": "Password is incorrect.",
+    "codeWrong": "Invalid code.",
+    "loadError": "Could not load settings."
   }
 }

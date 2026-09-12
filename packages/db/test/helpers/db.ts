@@ -68,7 +68,7 @@ export async function resetDatabase(superH: DbHandle): Promise<void> {
     TRUNCATE TABLE user_sessions, spending_aggregates, quota_snapshots, quota_sessions,
       connections, quota_providers, totp_secrets, webauthn_credentials,
       user_credentials, user_invites, idempotency_keys, instance_settings,
-      audit_events, auth_challenges, mfa_recovery_codes,
+      audit_events, auth_challenges, mfa_recovery_codes, auth_login_attempts,
       users RESTART IDENTITY CASCADE
   `);
   // Re-seed the singleton setup row (truncate removes it; the app expects it).

@@ -51,7 +51,7 @@ function logout() {
         <RouterLink to="/connections">{{ t("nav.connections") }}</RouterLink>
         <RouterLink to="/history">{{ t("nav.history") }}</RouterLink>
         <RouterLink
-          v-if="auth.isSupervisor"
+          v-if="auth.isAdmin"
           to="/admin"
         >
           {{ t("nav.admin") }}
@@ -105,8 +105,9 @@ function logout() {
 }
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-8);
+  gap: var(--space-4) var(--space-8);
   padding-bottom: var(--space-4);
   border-bottom: var(--border-hairline);
   margin-bottom: var(--space-8);

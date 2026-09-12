@@ -32,6 +32,26 @@ interface HistoryPoint {
   currency: string;
   granularity: "daily" | "weekly" | "monthly";
 }
+interface UserView {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  role: "user" | "supervisor" | "admin";
+  locale: string;
+  isActive: boolean;
+  hasPassword: boolean;
+  createdAt: string;
+}
+interface InviteView {
+  id: string;
+  email: string;
+  role: "user" | "supervisor" | "admin";
+  expiresAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
 
 const TOKENS: Record<string, string> = {
   "tok-user": "user",
@@ -39,7 +59,13 @@ const TOKENS: Record<string, string> = {
   "tok-admin": "admin",
 };
 
-let state: { quotas: Quota[]; connections: Connection[]; history: HistoryPoint[] };
+let state: {
+  quotas: Quota[];
+  connections: Connection[];
+  history: HistoryPoint[];
+  users: UserView[];
+  invites: InviteView[];
+};
 
 function reset() {
   state = {
@@ -79,6 +105,31 @@ function reset() {
       { windowKey: "weekly:2026-09-07", spentAmount: 9.1, currency: "USD", granularity: "weekly" },
       { windowKey: "monthly:2026-09-01", spentAmount: 21.7, currency: "USD", granularity: "monthly" },
     ],
+    users: [
+      {
+        id: "u-admin",
+        email: "admin@test.local",
+        firstName: "Ada",
+        lastName: "Admin",
+        role: "admin",
+        locale: "en",
+        isActive: true,
+        hasPassword: true,
+        createdAt: "2026-09-01T00:00:00Z",
+      },
+      {
+        id: "u-user",
+        email: "user@test.local",
+        firstName: "Uma",
+        lastName: null,
+        role: "user",
+        locale: "en",
+        isActive: true,
+        hasPassword: false,
+        createdAt: "2026-09-02T00:00:00Z",
+      },
+    ],
+    invites: [],
   };
 }
 reset();
@@ -172,6 +223,62 @@ const server = createServer(async (req, res) => {
     if (role === "user") return json(res, 403, { title: "Forbidden", status: 403 });
     return json(res, 200, { summary: {} });
   }
+
+  // ---- User management (Phase A) ------------------------------------------
+  if (url.pathname === "/v1/admin/users") {
+    if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
+    if (role !== "admin") return json(res, 403, { title: "Forbidden", status: 403 });
+    return json(res, 200, { data: state.users, has_more: false, next_cursor: null });
+  }
+  if (url.pathname.startsWith("/v1/admin/users/")) {
+    if (role !== "admin") return json(res, 403, { title: "Forbidden", status: 403 });
+    const id = url.pathname.split("/").pop();
+    const user = state.users.find((u) => u.id === id);
+    if (!user) return json(res, 404, { type: "https://api.llm-quota.dev/errors/not-found", title: "Not Found", status: 404 });
+    if (req.method === "PATCH") {
+      const parsed = JSON.parse((await readBody(req)) || "{}") as Partial<UserView>;
+      Object.assign(user, parsed);
+      return json(res, 200, user);
+    }
+    if (req.method === "DELETE") {
+      if (user.role === "admin" && state.users.filter((u) => u.role === "admin" && u.isActive).length <= 1) {
+        return json(res, 409, {
+          type: "https://api.llm-quota.dev/errors/last-admin",
+          title: "Conflict",
+          status: 409,
+        });
+      }
+      state.users = state.users.filter((u) => u.id !== id);
+      res.writeHead(204, { "Access-Control-Allow-Origin": "*" });
+      return res.end();
+    }
+  }
+  if (url.pathname === "/v1/admin/invites") {
+    if (role !== "admin") return json(res, 403, { title: "Forbidden", status: 403 });
+    if (req.method === "POST") {
+      const parsed = JSON.parse((await readBody(req)) || "{}") as { email: string; role: "user" | "supervisor" | "admin" };
+      const invite: InviteView = {
+        id: `inv-${Date.now()}`,
+        email: parsed.email,
+        role: parsed.role ?? "user",
+        expiresAt: "2026-09-15T00:00:00Z",
+        acceptedAt: null,
+        revokedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      state.invites.push(invite);
+      return json(res, 201, { invite, inviteUrl: `/invite#token=stub-${invite.id}` });
+    }
+    return json(res, 200, { data: state.invites, has_more: false, next_cursor: null });
+  }
+  if (url.pathname.startsWith("/v1/admin/invites/") && req.method === "DELETE") {
+    if (role !== "admin") return json(res, 403, { title: "Forbidden", status: 403 });
+    const id = url.pathname.split("/").pop();
+    state.invites = state.invites.filter((i) => i.id !== id);
+    res.writeHead(204, { "Access-Control-Allow-Origin": "*" });
+    return res.end();
+  }
+
   json(res, 404, { title: "Not Found", status: 404 });
 });
 

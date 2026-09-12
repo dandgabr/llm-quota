@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { nextTick, onMounted, reactive, ref } from "vue";
 import { useAuthStore } from "../stores/auth";
 import { useTranslator } from "../lib/i18n";
 import { ApiError, type InviteView, type Role, type UserView } from "../lib/api";
@@ -26,6 +26,34 @@ const roleDialog = ref<{ user: UserView; role: Role } | null>(null);
 const deleteDialog = ref<{ user: UserView; confirm: string } | null>(null);
 const dialogError = ref<string | null>(null);
 const busy = ref(false);
+
+/** Last focused element before opening a dialog (focus is restored on close). */
+let lastFocused: HTMLElement | null = null;
+
+function captureFocus() {
+  lastFocused = (document.activeElement as HTMLElement) ?? null;
+}
+
+function restoreFocus() {
+  lastFocused?.focus();
+  lastFocused = null;
+}
+
+/** Focus the first focusable control inside the dialog (a11y). */
+function focusFirstField(selector: string) {
+  void nextTick(() => {
+    const el = document.querySelector<HTMLElement>(selector);
+    el?.focus();
+  });
+}
+
+function closeDialogs() {
+  inviteOpen.value = false;
+  createdInvite.value = null;
+  roleDialog.value = null;
+  deleteDialog.value = null;
+  restoreFocus();
+}
 
 const roles: Role[] = ["user", "supervisor", "admin"];
 
@@ -67,7 +95,9 @@ function openInvite() {
   inviteError.value = null;
   createdInvite.value = null;
   copied.value = false;
+  captureFocus();
   inviteOpen.value = true;
+  focusFirstField('[data-dialog="invite"] input[type="email"]');
 }
 
 async function submitInvite() {
@@ -108,7 +138,9 @@ async function copyLink() {
 
 function openRole(user: UserView) {
   dialogError.value = null;
+  captureFocus();
   roleDialog.value = { user, role: user.role };
+  focusFirstField('[data-dialog="role"] select');
 }
 
 async function confirmRole() {
@@ -121,7 +153,7 @@ async function confirmRole() {
     const updated = await api.updateUser(roleDialog.value.user.id, { role: roleDialog.value.role });
     users.value = users.value.map((u) => (u.id === updated.id ? updated : u));
     notice.value = t("users.roleUpdated");
-    roleDialog.value = null;
+    closeDialogs();
   } catch (err) {
     dialogError.value = err instanceof ApiError && err.code === "last-admin"
       ? t("users.lastAdminGuard")
@@ -136,12 +168,15 @@ async function confirmRole() {
 async function toggleBlock(user: UserView) {
   const api = auth.api();
   if (!api) return;
+  notice.value = null;
+  error.value = null;
   try {
     const updated = await api.updateUser(user.id, { isActive: !user.isActive });
     users.value = users.value.map((u) => (u.id === updated.id ? updated : u));
     notice.value = user.isActive ? t("users.blockedDone") : t("users.unblockedDone");
   } catch (err) {
-    notice.value = err instanceof ApiError && err.code === "conflict"
+    // Failures must be announced as errors, never as success.
+    error.value = err instanceof ApiError && err.code === "conflict"
       ? t("users.selfGuard")
       : t("errors.generic");
   }
@@ -149,7 +184,9 @@ async function toggleBlock(user: UserView) {
 
 function openDelete(user: UserView) {
   dialogError.value = null;
+  captureFocus();
   deleteDialog.value = { user, confirm: "" };
+  focusFirstField('[data-dialog="delete"] input');
 }
 
 async function confirmDelete() {
@@ -162,7 +199,7 @@ async function confirmDelete() {
     await api.deleteUser(deleteDialog.value.user.id);
     users.value = users.value.filter((u) => u.id !== deleteDialog.value?.user.id);
     notice.value = t("users.deleted");
-    deleteDialog.value = null;
+    closeDialogs();
   } catch (err) {
     dialogError.value = err instanceof ApiError && err.code === "last-admin"
       ? t("users.lastAdminGuard")
@@ -175,17 +212,20 @@ async function confirmDelete() {
 async function revokeInvite(invite: InviteView) {
   const api = auth.api();
   if (!api) return;
+  notice.value = null;
+  error.value = null;
   try {
     await api.revokeInvite(invite.id);
     invites.value = invites.value.filter((i) => i.id !== invite.id);
     notice.value = t("invites.revoked");
   } catch {
-    notice.value = t("errors.generic");
+    error.value = t("errors.generic");
   }
 }
 
 function formatDate(iso: string): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(iso));
+  const locale = auth.locale ?? undefined;
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(iso));
 }
 
 onMounted(() => void load());
@@ -228,11 +268,11 @@ onMounted(() => void load());
 
     <div
       v-if="loading"
-      class="card"
+      class="card skeleton"
+      style="min-height: 120px"
       aria-busy="true"
-    >
-      {{ t("app.loading") }}
-    </div>
+      :aria-label="t('app.loading')"
+    />
 
     <template v-else>
       <div class="card">
@@ -245,6 +285,7 @@ onMounted(() => void load());
           <button
             type="button"
             class="btn-ghost"
+            :disabled="!auth.isAdmin"
             @click="openInvite"
           >
             {{ t("users.emptyCta") }}
@@ -278,15 +319,24 @@ onMounted(() => void load());
               v-for="u in users"
               :key="u.id"
             >
-              <td>{{ u.email }}</td>
-              <td>{{ fullName(u) }}</td>
-              <td>{{ roleLabel(u.role) }}</td>
-              <td>
-                <span :class="['badge', u.isActive ? 'ok' : 'blocked']">
+              <td :data-label="t('users.email')">
+                {{ u.email }}
+              </td>
+              <td :data-label="t('users.name')">
+                {{ fullName(u) }}
+              </td>
+              <td :data-label="t('users.role')">
+                {{ roleLabel(u.role) }}
+              </td>
+              <td :data-label="t('users.status')">
+                <span :class="['tag', u.isActive ? 'is-ok' : 'is-blocked']">
                   {{ u.isActive ? t("users.active") : t("users.blocked") }}
                 </span>
               </td>
-              <td class="row-actions">
+              <td
+                class="row-actions"
+                :data-label="t('users.actions')"
+              >
                 <button
                   type="button"
                   class="btn-ghost"
@@ -349,11 +399,13 @@ onMounted(() => void load());
     <div
       v-if="inviteOpen"
       class="overlay"
+      data-dialog="invite"
       role="dialog"
       aria-modal="true"
       aria-labelledby="invite-title"
+      @keydown.esc="closeDialogs"
     >
-      <div class="modal card">
+      <div class="modal card is-raised">
         <h2 id="invite-title">
           {{ t("users.invite") }}
         </h2>
@@ -391,7 +443,8 @@ onMounted(() => void load());
               <button
                 type="button"
                 class="btn-ghost"
-                @click="inviteOpen = false"
+                :aria-label="t('users.close')"
+                @click="closeDialogs"
               >
                 ✕
               </button>
@@ -412,13 +465,14 @@ onMounted(() => void load());
           <input
             :value="createdInvite.url"
             readonly
-            aria-label="invite link"
+            :aria-label="t('invites.linkLabel')"
           >
           <div class="modal-actions">
             <button
               type="button"
               class="btn-ghost"
-              @click="inviteOpen = false"
+              :aria-label="t('users.close')"
+              @click="closeDialogs"
             >
               ✕
             </button>
@@ -437,26 +491,31 @@ onMounted(() => void load());
     <div
       v-if="roleDialog"
       class="overlay"
+      data-dialog="role"
       role="dialog"
       aria-modal="true"
       aria-labelledby="role-title"
+      @keydown.esc="closeDialogs"
     >
-      <div class="modal card">
+      <div class="modal card is-raised">
         <h2 id="role-title">
           {{ t("users.changeRoleTitle", { name: fullName(roleDialog.user) }) }}
         </h2>
         <p class="hint">
           {{ t("users.changeRoleImpact", { name: fullName(roleDialog.user) }) }}
         </p>
-        <select v-model="roleDialog.role">
-          <option
-            v-for="r in roles"
-            :key="r"
-            :value="r"
-          >
-            {{ roleLabel(r) }}
-          </option>
-        </select>
+        <label>
+          {{ t("users.role") }}
+          <select v-model="roleDialog.role">
+            <option
+              v-for="r in roles"
+              :key="r"
+              :value="r"
+            >
+              {{ roleLabel(r) }}
+            </option>
+          </select>
+        </label>
         <p
           v-if="dialogError"
           class="error"
@@ -468,7 +527,8 @@ onMounted(() => void load());
           <button
             type="button"
             class="btn-ghost"
-            @click="roleDialog = null"
+            :aria-label="t('users.close')"
+            @click="closeDialogs"
           >
             ✕
           </button>
@@ -487,11 +547,13 @@ onMounted(() => void load());
     <div
       v-if="deleteDialog"
       class="overlay"
+      data-dialog="delete"
       role="dialog"
       aria-modal="true"
       aria-labelledby="delete-title"
+      @keydown.esc="closeDialogs"
     >
-      <div class="modal card">
+      <div class="modal card is-raised">
         <h2 id="delete-title">
           {{ t("users.deleteTitle", { name: fullName(deleteDialog.user) }) }}
         </h2>
@@ -513,7 +575,8 @@ onMounted(() => void load());
           <button
             type="button"
             class="btn-ghost"
-            @click="deleteDialog = null"
+            :aria-label="t('users.close')"
+            @click="closeDialogs"
           >
             ✕
           </button>
@@ -559,28 +622,17 @@ onMounted(() => void load());
   border-bottom: var(--border-hairline);
 }
 .users-table th {
-  color: var(--text-secondary);
-  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
 }
 .row-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  border: var(--border-hairline);
-}
-.badge.ok {
-  color: var(--status-success);
-}
-.badge.blocked {
-  color: var(--status-danger);
 }
 .invite-list {
   list-style: none;
@@ -600,7 +652,7 @@ onMounted(() => void load());
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgb(0 0 0 / 0.4);
+  background: var(--scrim);
   display: grid;
   place-items: center;
   padding: var(--space-4);
@@ -609,7 +661,6 @@ onMounted(() => void load());
   width: min(480px, 100%);
   max-height: 90vh;
   overflow: auto;
-  background: var(--surface-raised);
 }
 .modal form {
   display: grid;
@@ -626,7 +677,7 @@ onMounted(() => void load());
 }
 .danger-solid {
   background: var(--status-danger);
-  color: var(--surface-base);
+  color: var(--accent-on-accent);
 }
 @media (max-width: 720px) {
   .users-table thead {
@@ -638,9 +689,22 @@ onMounted(() => void load());
     border-bottom: var(--border-hairline);
   }
   .users-table td {
-    display: block;
+    display: flex;
+    gap: var(--space-2);
     border: none;
     padding: 2px 0;
+  }
+  .users-table td::before {
+    content: attr(data-label);
+    flex: 0 0 40%;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .row-actions {
+    margin-top: var(--space-2);
   }
 }
 </style>

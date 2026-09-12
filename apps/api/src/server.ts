@@ -10,8 +10,9 @@
  * request-body size cap, and an ASVS V16-aligned audit logger.
  */
 
+import { readFile, realpath, stat } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { createServer as createHttpsServer, type ServerOptions as HttpsServerOptions } from "node:https";
 import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
@@ -23,6 +24,7 @@ import {
   withRlsContext,
   PostgresConnectionStore,
   PostgresHistoryStore,
+  PostgresIdempotencyStore,
   PostgresQuotaStore,
   type DbHandle,
   type ResolvedPrincipal,
@@ -61,9 +63,9 @@ function assertProdCertAllowed(certPath: string, env: string): void {
   }
 }
 
-/** Redact secret-bearing path segments (e.g. an invite token) before logging. */
+/** Redact a secret-bearing query value (invite token) before logging. */
 export function redactPath(path: string): string {
-  return path.replace(/\/(invites?)\/[A-Za-z0-9._~-]{8,}/gi, "/$1/[redacted]");
+  return path.replace(/(token=)[A-Za-z0-9._~-]{8,}/gi, "$1[redacted]");
 }
 
 /** ASVS V16-aligned audit logger (structured; never logs request bodies). */
@@ -217,21 +219,32 @@ const CONTENT_TYPES: Record<string, string> = {
  * configured, the API is unaffected.
  */
 export function spaStatic(distPath: string | undefined) {
-  const root = distPath ? resolve(distPath) : null;
+  const configuredRoot = distPath ? resolve(distPath) : null;
   return async (c: Context, next: Next) => {
-    if (!root) return next();
+    if (!configuredRoot) return next();
     const method = c.req.method;
     if (method !== "GET" && method !== "HEAD") return next();
     const path = c.req.path;
     if (isApiSegment(path)) return next();
-    // Resolve the request to a filesystem path and confine it to the root.
-    const rel = decodeURIComponent(path).replace(/^\/+/, "");
-    const candidate = resolve(root, rel);
-    if (candidate !== root && !candidate.startsWith(root + "/")) return next();
-    if (/(^|\/)\.[^/]/.test(rel) || rel.endsWith(".map")) return next();
+
+    let root: string;
+    try {
+      root = await realpath(configuredRoot);
+    } catch {
+      // Dist directory missing/misconfigured at runtime: fall through to the API.
+      return next();
+    }
+
+    // Decode once; a malformed URI is treated as a miss, not a crash.
+    let rel: string;
+    try {
+      rel = decodeURIComponent(path).replace(/^\/+/, "");
+    } catch {
+      return next();
+    }
+    if (rel.includes("\0") || /(^|\/)\.[^/]/.test(rel) || rel.endsWith(".map")) return next();
 
     const send = async (filePath: string, immutable: boolean): Promise<Response> => {
-      const { readFile } = await import("node:fs/promises");
       const ext = filePath.slice(filePath.lastIndexOf("."));
       c.header("Content-Type", CONTENT_TYPES[ext] ?? "application/octet-stream");
       c.header("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "no-store");
@@ -246,16 +259,19 @@ export function spaStatic(distPath: string | undefined) {
     };
 
     try {
-      const { stat } = await import("node:fs/promises");
+      const candidate = await realpath(resolve(root, rel));
+      // Resolve symlinks too, then confine the REAL path to the REAL root.
+      if (candidate !== root && !candidate.startsWith(root + sep) && !candidate.startsWith(root + "/")) {
+        return next();
+      }
       const info = await stat(candidate);
       if (info.isFile()) return send(candidate, /\/assets\//.test(path));
     } catch {
-      // fall through to the SPA fallback
+      // not a file -> SPA fallback
     }
     // SPA fallback: unknown non-API GET => index.html (client-side routing).
     const indexPath = resolve(root, "index.html");
     try {
-      const { stat } = await import("node:fs/promises");
       if ((await stat(indexPath)).isFile()) return send(indexPath, false);
     } catch {
       // no built SPA present
@@ -430,6 +446,19 @@ export function startCollector(
         },
         { "app.is_collector": "true" },
       );
+      // Idempotency ledger: drop expired keys (bounded by TTL 24h). Runs under
+      // the collector GUC so the maintenance delete policy applies on the pool.
+      try {
+        const swept = await withRlsContext(
+          db.db,
+          COLLECTOR,
+          (tx) => new PostgresIdempotencyStore(tx).sweep(now),
+          { "app.is_collector": "true" },
+        );
+        if (swept) log(`[collector] idempotency: swept ${swept} expired keys`);
+      } catch (err) {
+        log(`[collector] idempotency sweep error: ${String(err)}`);
+      }
     } catch (err) {
       log(`[collector] pass error: ${String(err)}`);
     } finally {

@@ -41,4 +41,24 @@ describe("password hashing (scrypt)", () => {
     expect(isValidPassword("a".repeat(12))).toBe(true);
     expect(isValidPassword("a".repeat(1025))).toBe(false);
   });
+
+  it("rejects out-of-range passwords before deriving", async () => {
+    await expect(hashPassword("short")).rejects.toThrow(/between/);
+    await expect(hashPassword("a".repeat(1025))).rejects.toThrow(/between/);
+    const hash = await hashPassword("valid-password-123");
+    // Over-length verify returns false without running the KDF.
+    expect(await verifyPassword("a".repeat(2000), hash)).toBe(false);
+  });
+
+  it("supports parameter upgrades (verify parses stored params)", async () => {
+    const hash = await hashPassword("upgrade-path-123", { N: 2 ** 14, r: 8, p: 1 });
+    const parsed = parsePasswordHash(hash);
+    expect(parsed?.params.N).toBe(2 ** 14);
+    expect(await verifyPassword("upgrade-path-123", hash)).toBe(true);
+  });
+
+  it("runs the dummy verification without throwing (anti-enumeration)", async () => {
+    const { dummyVerify } = await import("../src/password.js");
+    await expect(dummyVerify("anything")).resolves.toBeUndefined();
+  });
 });

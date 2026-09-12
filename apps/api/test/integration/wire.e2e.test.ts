@@ -101,7 +101,7 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
   it("rejects protected endpoints without a bearer token (401 problem+json)", async () => {
     const res = await fetch(`${base}/v1/quotas`);
     expect(res.status).toBe(401);
-    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.headers.get("content-type")).toContain("application/problem+json");
     const body = (await res.json()) as { title: string; status: number };
     expect(body.status).toBe(401);
   });
@@ -335,6 +335,94 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
       expect(second.status).toBe(201);
       const secondBody = (await second.json()) as { invite: { id: string } };
       expect(secondBody.invite.id).toBe(firstBody.invite.id);
+    });
+
+    it("reusing an Idempotency-Key with a different body returns 422", async () => {
+      const key = "idem-key-mismatch";
+      await fetch(`${base}/v1/admin/invites`, {
+        method: "POST",
+        headers: { ...adminAuth(), "Content-Type": "application/json", "Idempotency-Key": key },
+        body: JSON.stringify({ email: "mismatch-a@test.local", role: "user" }),
+      });
+      const res = await fetch(`${base}/v1/admin/invites`, {
+        method: "POST",
+        headers: { ...adminAuth(), "Content-Type": "application/json", "Idempotency-Key": key },
+        body: JSON.stringify({ email: "mismatch-b@test.local", role: "user" }),
+      });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as { type: string };
+      expect(body.type).toContain("idempotency-conflict");
+    });
+
+    it("PATCH changes a user's role; a supervisor cannot (403)", async () => {
+      const target = await seedUser(t.super, { role: "user", email: "patch-target@test.local" });
+      const res = await fetch(`${base}/v1/admin/users/${target}`, {
+        method: "PATCH",
+        headers: { ...adminAuth(), "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "supervisor" }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { role: string };
+      expect(body.role).toBe("supervisor");
+
+      const supId = await seedUser(t.super, { role: "supervisor", email: "wire-sup@test.local" });
+      const supToken = "wire-token-sup-123";
+      await createSession(t.super.db, {
+        userId: supId,
+        tokenHash: hashToken(supToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+      const denied = await fetch(`${base}/v1/admin/users/${target}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${supToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "admin" }),
+      });
+      expect(denied.status).toBe(403);
+    });
+
+    it("cannot demote or delete the last active admin (409 last-admin)", async () => {
+      // adminId is the only active admin (other admins created by other tests
+      // were not; ensure by demoting is not possible via HTTP here).
+      const demote = await fetch(`${base}/v1/admin/users/${adminId}`, {
+        method: "PATCH",
+        headers: { ...adminAuth(), "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "user" }),
+      });
+      expect(demote.status).toBe(409);
+      const body = (await demote.json()) as { type: string };
+      expect(body.type).toContain("last-admin");
+    });
+
+    it("DELETE soft-deletes a user and returns 204", async () => {
+      const victim = await seedUser(t.super, { role: "user", email: "del-victim@test.local" });
+      const res = await fetch(`${base}/v1/admin/users/${victim}`, {
+        method: "DELETE",
+        headers: adminAuth(),
+      });
+      expect(res.status).toBe(204);
+      // A soft-deleted user no longer appears in the admin list.
+      const list = await fetch(`${base}/v1/admin/users`, { headers: adminAuth() });
+      const body = (await list.json()) as { data: { id: string }[] };
+      expect(body.data.some((u) => u.id === victim)).toBe(false);
+    });
+
+    it("DELETE invite returns 204 then 404 on a second attempt", async () => {
+      const create = await fetch(`${base}/v1/admin/invites`, {
+        method: "POST",
+        headers: { ...adminAuth(), "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "revoke-me@test.local", role: "user" }),
+      });
+      const created = (await create.json()) as { invite: { id: string } };
+      const first = await fetch(`${base}/v1/admin/invites/${created.invite.id}`, {
+        method: "DELETE",
+        headers: adminAuth(),
+      });
+      expect(first.status).toBe(204);
+      const second = await fetch(`${base}/v1/admin/invites/${created.invite.id}`, {
+        method: "DELETE",
+        headers: adminAuth(),
+      });
+      expect(second.status).toBe(404);
     });
   });
 });

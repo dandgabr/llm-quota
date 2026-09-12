@@ -23,6 +23,7 @@ and set the old one's status to `superseded by [[decisions/<new>]]`.
 | [ADR-009](ADR-009-security-layer-envelope-auth.md)             | Security layer: envelope crypto, TOTP/WebAuthn, OIDC, sessions, RBAC                 | accepted |
 | [ADR-011](ADR-011-design-system-flat-pastel.md)                 | Design system: Engineered Minimal Swiss — flat + mute pastel, anti-AI-slop          | accepted |
 | [ADR-012](ADR-012-production-runtime-wiring-and-hardening.md)   | Production runtime wiring and hardening (collector, app-role pool, CORS, fail-closed dev endpoints) | accepted |
+| [ADR-013](ADR-013-user-management-local-accounts-invites.md)   | User management: local accounts, invites, soft delete, idempotency, same-origin SPA serving          | accepted |
 
 ## Status legend
 

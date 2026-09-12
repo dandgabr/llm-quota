@@ -146,9 +146,16 @@ describe("Phase A — user management RLS", () => {
   it("soft delete revokes the user's sessions", async () => {
     const adminId = await seedUser(t.super, { role: "admin", email: "adm-sd@test.local" });
     const target = await seedUser(t.super, { role: "user", email: "t-sd@test.local" });
+    const other = await seedUser(t.super, { role: "user", email: "other-sd@test.local" });
     const { hash } = issueSessionToken(t.sessionSecret);
     await withRlsContext(t.app.db, { userId: target, role: "user", isAdmin: false, isSupervisorAdmin: false }, (tx) =>
-      createSession(tx, { userId: target, tokenHash: hash, expiresAt: new Date(Date.now() + 3600_000) }),
+      createSession(tx, { userId: target, tokenHash: `${hash}-a`, expiresAt: new Date(Date.now() + 3600_000) }),
+    );
+    await withRlsContext(t.app.db, { userId: target, role: "user", isAdmin: false, isSupervisorAdmin: false }, (tx) =>
+      createSession(tx, { userId: target, tokenHash: `${hash}-b`, expiresAt: new Date(Date.now() + 3600_000) }),
+    );
+    await withRlsContext(t.app.db, { userId: other, role: "user", isAdmin: false, isSupervisorAdmin: false }, (tx) =>
+      createSession(tx, { userId: other, tokenHash: `${hash}-c`, expiresAt: new Date(Date.now() + 3600_000) }),
     );
     await withRlsContext(
       t.app.db,
@@ -156,9 +163,63 @@ describe("Phase A — user management RLS", () => {
       (tx) => new PostgresUserStore(tx).softDelete(target, { db: tx }),
       { "app.users_admin_write": "true" },
     );
-    const [row] = await t.super.db.execute<{ revoked: boolean }>(
-      sql`SELECT revoked FROM user_sessions WHERE user_id = ${target}`,
-    ).then((r) => r.rows);
-    expect(row?.revoked).toBe(true);
+    const rows = await t.super.db
+      .execute<{ user_id: string; revoked: boolean }>(
+        sql`SELECT user_id, revoked FROM user_sessions ORDER BY token_hash`,
+      )
+      .then((r) => r.rows);
+    const targetRows = rows.filter((r) => r.user_id === target);
+    expect(targetRows).toHaveLength(2);
+    expect(targetRows.every((r) => r.revoked)).toBe(true);
+    expect(rows.find((r) => r.user_id === other)?.revoked).toBe(false);
+  });
+
+  it("a pure supervisor can read users; the supervisor policy hides soft-deleted", async () => {
+    const supId = await seedUser(t.super, { role: "supervisor", email: "sup@test.local" });
+    await seedUser(t.super, { role: "user", email: "live@test.local" });
+    await seedUser(t.super, { role: "user", email: "dead@test.local" });
+    await t.super.db.execute(sql`UPDATE users SET deleted_at = now() WHERE email = 'dead@test.local'`);
+    const rows = await withRlsContext(
+      t.app.db,
+      { userId: supId, role: "supervisor", isAdmin: false, isSupervisorAdmin: true },
+      (tx) => new PostgresUserStore(tx).list({ db: tx }),
+      { "app.is_supervisor_admin": "true" },
+    );
+    const emails = rows.map((r) => r.email).sort();
+    expect(emails).toContain("live@test.local");
+    expect(emails).not.toContain("dead@test.local");
+  });
+
+  it("admin can hard-delete a user (users_admin_delete policy) only with the write GUC", async () => {
+    const adminId = await seedUser(t.super, { role: "admin", email: "del-admin@test.local" });
+    const target = await seedUser(t.super, { role: "user", email: "hard-del@test.local" });
+    // Without the GUC: 0 rows (no matching policy).
+    const blind = await t.app.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.user_id', ${adminId}, true)`);
+      return tx.delete(users).where(eq(users.id, target)).returning({ id: users.id });
+    });
+    expect(blind).toHaveLength(0);
+    // With the GUC: the row is removed.
+    const deleted = await withRlsContext(
+      t.app.db,
+      adminPrincipal(adminId),
+      (tx) => tx.delete(users).where(eq(users.id, target)).returning({ id: users.id }),
+      { "app.users_admin_write": "true" },
+    );
+    expect(deleted).toHaveLength(1);
+  });
+
+  it("findByEmail resolves over the app role only for the target email", async () => {
+    const { hashPassword } = await import("@llm-quota/auth");
+    const passwordHash = await hashPassword("seed-password-123");
+    await seedUser(t.super, { role: "user", email: "lookup@test.local", passwordHash });
+    const found = await withRlsContext(
+      t.app.db,
+      { userId: "", role: "user", isAdmin: false, isSupervisorAdmin: false },
+      (tx) => new PostgresUserStore(tx).findByEmail("lookup@test.local", { db: tx }),
+      { "app.is_auth": "true", "app.auth_email": "lookup@test.local" },
+    );
+    expect(found?.email).toBe("lookup@test.local");
+    expect(found?.passwordHash).toContain("$scrypt$");
   });
 });

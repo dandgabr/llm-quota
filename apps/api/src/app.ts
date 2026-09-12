@@ -95,20 +95,30 @@ export interface ApiAppOptions {
   publicWebUrl?: string;
 }
 
+type ProblemTypeKey = keyof typeof PROBLEM_TYPES;
+
 function problem(
   status: number,
   title: string,
-  detail?: string,
-  typeKey: keyof typeof PROBLEM_TYPES | string = "internal",
+  detail: string | undefined,
+  typeKey: ProblemTypeKey,
   invalidParams?: { name: string; reason: string }[],
 ): Problem {
   return {
-    type: PROBLEM_TYPES[typeKey] ?? typeKey,
+    type: PROBLEM_TYPES[typeKey] ?? "https://api.llm-quota.dev/errors/internal",
     title,
     status,
     detail,
     invalid_params: invalidParams,
   };
+}
+
+/** RFC 7807 response helper (`application/problem+json`). */
+function problemJson(
+  c: { json: (body: unknown, status: number, headers: Record<string, string>) => Response },
+  p: Problem,
+): Response {
+  return c.json(p, p.status, { "Content-Type": "application/problem+json" });
 }
 
 /**
@@ -165,7 +175,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     }
     const auth = c.req.header("authorization");
     if (!auth || !auth.startsWith("Bearer ")) {
-      return c.json(problem(401, "Unauthorized", "Missing bearer token", "unauthorized"), 401);
+      return problemJson(c, problem(401, "Unauthorized", "Missing bearer token", "unauthorized"));
     }
     const principal = await resolvePrincipal(
       db.db,
@@ -176,15 +186,18 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       process.env.SESSION_SECRET || undefined,
     );
     if (!principal) {
-      return c.json(problem(401, "Unauthorized", "Invalid or expired session", "unauthorized"), 401);
+      return problemJson(c, problem(401, "Unauthorized", "Invalid or expired session", "unauthorized"));
     }
     c.set("principal", principal);
     await next();
   });
 
   // RFC 7807 for anything that throws (malformed JSON, repo errors, ...).
+  // Never leak the raw error message to the client (SQL/constraint details);
+  // log it server-side and return a generic detail.
   app.onError((err, c) => {
-    return c.json(problem(500, "Internal Server Error", err.message, "internal"), 500);
+    console.error("[llm-quota:api] unhandled error", err instanceof Error ? err.message : String(err));
+    return problemJson(c, problem(500, "Internal Server Error", "Unexpected server error", "internal"));
   });
 
   // Public: health.
@@ -194,7 +207,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     // Gated until server-side state/verifier persistence ships (ADR-009 note):
     // issuing challenge+state without binding them server-side invites CSRF.
     if (!devSessionsEnabled(enableDevSession)) {
-      return c.json(problem(403, "Forbidden", "OIDC flow not enabled"), 403);
+      return problemJson(c, problem(403, "Forbidden", "OIDC flow not enabled", "forbidden"));
     }
     // PKCE: return only the challenge + state; NEVER the verifier.
     const { challenge } = generatePkcePair();
@@ -204,7 +217,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
 
   app.get("/auth/mfa/totp/challenge", (c) => {
     if (!devSessionsEnabled(enableDevSession)) {
-      return c.json(problem(403, "Forbidden", "MFA enrollment not enabled"), 403);
+      return problemJson(c, problem(403, "Forbidden", "MFA enrollment not enabled", "forbidden"));
     }
     const secret = generateTotpSecret();
     return c.json({ totp: { secret, verified: false } });
@@ -212,7 +225,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
 
   app.get("/auth/mfa/webauthn/challenge", (c) => {
     if (!devSessionsEnabled(enableDevSession)) {
-      return c.json(problem(403, "Forbidden", "MFA enrollment not enabled"), 403);
+      return problemJson(c, problem(403, "Forbidden", "MFA enrollment not enabled", "forbidden"));
     }
     return c.json({ challenge: generateWebAuthnChallenge() });
   });
@@ -221,17 +234,17 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     // Fail-closed dev/test issuance. In production this is disabled; real
     // deployments authenticate via OIDC + MFA (see docs/architecture/security.md).
     if (!devSessionsEnabled(enableDevSession)) {
-      return c.json(problem(403, "Forbidden", "Disabled (set ENABLE_DEV_SESSION=1 outside production)", "forbidden"), 403);
+      return problemJson(c, problem(403, "Forbidden", "Disabled (set ENABLE_DEV_SESSION=1 outside production)", "forbidden"));
     }
     const secret = process.env.SESSION_SECRET ?? "";
     if (!isValidSessionSecret(secret)) {
-      return c.json(problem(500, "Server Error", "SESSION_SECRET must be ≥ 32 chars", "internal"), 500);
+      return problemJson(c, problem(500, "Server Error", "SESSION_SECRET must be ≥ 32 chars", "internal"));
     }
     const body = await c.req
       .json<{ userId: string; role?: "user" | "supervisor" | "admin"; expiresInSec?: number }>()
       .catch(() => null);
     if (!body?.userId) {
-      return c.json(problem(400, "Bad Request", "userId required", "invalid_params"), 400);
+      return problemJson(c, problem(400, "Bad Request", "userId required", "invalid_params"));
     }
     // Cap the dev-session lifetime (hard upper bound: 24h).
     const expiresInSec = Math.min(Math.max(1, body.expiresInSec ?? 3600), 86_400);
@@ -259,7 +272,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   app.get("/v1/admin/users", async (c) => {
     const p = c.get("principal");
     if (!hasRole(p.role, "supervisor")) {
-      return c.json(problem(403, "Forbidden", "Supervisor role required", "forbidden"), 403);
+      return problemJson(c, problem(403, "Forbidden", "Supervisor role required", "forbidden"));
     }
     const rows = await withRlsContext(
       db.db,
@@ -272,10 +285,10 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
 
   app.patch("/v1/admin/users/:id", async (c) => {
     const p = requireAdmin(c);
-    if (!p) return c.json(problem(403, "Forbidden", "Admin role required", "forbidden"), 403);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
     const body = await c.req.json<{ role?: Role; isActive?: boolean }>().catch(() => null);
     if (!body || (body.role === undefined && body.isActive === undefined)) {
-      return c.json(problem(400, "Bad Request", "role or isActive required", "invalid_params"), 400);
+      return problemJson(c, problem(400, "Bad Request", "role or isActive required", "invalid_params"));
     }
     const target = c.req.param("id");
     const result = await withRlsContext(
@@ -305,23 +318,23 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       { "app.users_admin_write": "true" },
     );
     if (result.kind === "last_admin") {
-      return c.json(problem(409, "Conflict", "cannot remove the last active admin", "last_admin"), 409);
+      return problemJson(c, problem(409, "Conflict", "cannot remove the last active admin", "last_admin"));
     }
     if (result.kind === "self") {
-      return c.json(problem(409, "Conflict", "cannot change your own role or block yourself", "conflict"), 409);
+      return problemJson(c, problem(409, "Conflict", "cannot change your own role or block yourself", "conflict"));
     }
     if (result.kind === "not_found") {
-      return c.json(problem(404, "Not Found", "User not found", "not_found"), 404);
+      return problemJson(c, problem(404, "Not Found", "User not found", "not_found"));
     }
     return c.json(result.view);
   });
 
   app.delete("/v1/admin/users/:id", async (c) => {
     const p = requireAdmin(c);
-    if (!p) return c.json(problem(403, "Forbidden", "Admin role required", "forbidden"), 403);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
     const target = c.req.param("id");
     if (target === p.userId) {
-      return c.json(problem(409, "Conflict", "cannot delete yourself", "conflict"), 409);
+      return problemJson(c, problem(409, "Conflict", "cannot delete yourself", "conflict"));
     }
     const result = await withRlsContext(
       db.db,
@@ -340,10 +353,10 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       { "app.users_admin_write": "true" },
     );
     if (result === "last_admin") {
-      return c.json(problem(409, "Conflict", "cannot delete the last active admin", "last_admin"), 409);
+      return problemJson(c, problem(409, "Conflict", "cannot delete the last active admin", "last_admin"));
     }
     if (result === "not_found") {
-      return c.json(problem(404, "Not Found", "User not found", "not_found"), 404);
+      return problemJson(c, problem(404, "Not Found", "User not found", "not_found"));
     }
     return c.body(null, 204);
   });
@@ -351,7 +364,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   // ---- Invites ------------------------------------------------------------
   app.get("/v1/admin/invites", async (c) => {
     const p = requireAdmin(c);
-    if (!p) return c.json(problem(403, "Forbidden", "Admin role required", "forbidden"), 403);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
     const rows = await withRlsContext(db.db, p, (tx) => inviteStore.list({ db: tx }), {
       "app.users_admin_write": "true",
     });
@@ -360,13 +373,13 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
 
   app.post("/v1/admin/invites", async (c) => {
     const p = requireAdmin(c);
-    if (!p) return c.json(problem(403, "Forbidden", "Admin role required", "forbidden"), 403);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
     const body = await c.req
       .json<{ email?: string; role?: Role; expiresInHours?: number }>()
       .catch(() => null);
     const email = (body?.email ?? "").trim().toLowerCase();
     if (!email || !email.includes("@")) {
-      return c.json(problem(400, "Bad Request", "valid email required", "invalid_params"), 400);
+      return problemJson(c, problem(400, "Bad Request", "valid email required", "invalid_params"));
     }
     const role: Role = body?.role && ["user", "supervisor", "admin"].includes(body.role) ? body.role : "user";
     const expiresInHours = Math.min(Math.max(1, body?.expiresInHours ?? 72), 168);
@@ -374,7 +387,8 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     // instead of minting a second invite. Run under the admin RLS context.
     const idemKey = c.req.header("idempotency-key");
     const useIdem = validIdempotencyKey(idemKey);
-    const rHash = requestHash("POST", "/v1/admin/invites", { email, role, expiresInHours });
+    // Only hash the body when idempotency is actually used.
+    const rHash = useIdem ? requestHash("POST", "/v1/admin/invites", { email, role, expiresInHours }) : "";
     const result = await withRlsContext(
       db.db,
       p,
@@ -384,10 +398,17 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
           if (claim.kind === "replay") {
             return { kind: "replay" as const, status: claim.status ?? 201, body: claim.body ?? "{}" };
           }
-          if (claim.kind === "hash_mismatch") return { kind: "hash_mismatch" as const };
+          if (claim.kind === "hash_mismatch") {
+            // The claim belongs to a different request; release so a correct
+            // retry (or the original body) can proceed.
+            await idempotencyStore.release(p.userId, idemKey, { db: tx });
+            return { kind: "hash_mismatch" as const };
+          }
           if (claim.kind === "conflict") return { kind: "idem_conflict" as const };
         }
         if (await inviteStore.emailInUse(email, { db: tx })) {
+          // Do not leave a claimed-but-uncompleted key for a rejected request.
+          if (useIdem) await idempotencyStore.release(p.userId, idemKey, { db: tx });
           return { kind: "user_exists" as const };
         }
         const { token, hash } = issueInviteToken();
@@ -407,24 +428,24 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     );
     if (result.kind === "replay") return c.body(result.body, result.status as 201);
     if (result.kind === "hash_mismatch") {
-      return c.json(problem(422, "Unprocessable Entity", "Idempotency-Key reused with a different request", "idempotency_conflict"), 422);
+      return problemJson(c, problem(422, "Unprocessable Entity", "Idempotency-Key reused with a different request", "idempotency_conflict"));
     }
     if (result.kind === "idem_conflict") {
-      return c.json(problem(409, "Conflict", "A request with this Idempotency-Key is in flight", "idempotency_conflict"), 409);
+      return problemJson(c, problem(409, "Conflict", "A request with this Idempotency-Key is in flight", "idempotency_conflict"));
     }
     if (result.kind === "user_exists") {
-      return c.json(problem(409, "Conflict", "email already has an account; use password reset", "user_exists"), 409);
+      return problemJson(c, problem(409, "Conflict", "email already has an account; use password reset", "user_exists"));
     }
     return c.json(result.payload, 201);
   });
 
   app.delete("/v1/admin/invites/:id", async (c) => {
     const p = requireAdmin(c);
-    if (!p) return c.json(problem(403, "Forbidden", "Admin role required", "forbidden"), 403);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
     const ok = await withRlsContext(db.db, p, (tx) => inviteStore.revoke(c.req.param("id"), { db: tx }), {
       "app.users_admin_write": "true",
     });
-    if (!ok) return c.json(problem(404, "Not Found", "Invite not found or already used", "not_found"), 404);
+    if (!ok) return problemJson(c, problem(404, "Not Found", "Invite not found or already used", "not_found"));
     return c.body(null, 204);
   });
 
@@ -445,7 +466,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       (tx) => connStore.remove(c.req.param("id"), p.userId, { db: tx }),
       p.isAdmin ? { "app.users_admin_write": "true" } : {},
     );
-    if (n === 0) return c.json(problem(404, "Not Found", "Connection not found", "not_found"), 404);
+    if (n === 0) return problemJson(c, problem(404, "Not Found", "Connection not found", "not_found"));
     return c.body(null, 204);
   });
 
@@ -460,7 +481,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
       .catch(() => null);
     const secret = (body?.secret ?? "").trim();
     if (!body?.providerId || !secret) {
-      return c.json(problem(400, "Bad Request", "providerId and secret are required"), 400);
+      return problemJson(c, problem(400, "Bad Request", "providerId and secret are required", "invalid_params"));
     }
     const p = c.get("principal");
     try {
@@ -475,9 +496,9 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
         }),
       );
       return c.json(view, 201);
-    } catch (err) {
+    } catch {
       // Unknown providerId trips the FK constraint -> client error, not 500.
-      return c.json(problem(400, "Bad Request", `Connection rejected: ${String(err)}`), 400);
+      return problemJson(c, problem(400, "Bad Request", "Connection rejected", "invalid_params"));
     }
   });
 
@@ -493,7 +514,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   app.get("/v1/quotas/summary", async (c) => {
     const p = c.get("principal");
     if (!hasRole(p.role, "supervisor")) {
-      return c.json(problem(403, "Forbidden", "Supervisor role required"), 403);
+      return problemJson(c, problem(403, "Forbidden", "Supervisor role required", "forbidden"));
     }
     // Supervisor read: month-to-date spend totals by currency (the RLS
     // supervisor-read policy scopes the rows inside the transaction).
@@ -534,7 +555,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     };
     const granularity = (pick("granularity") ?? "weekly") as Granularity;
     if (!GRANULARITIES.includes(granularity)) {
-      return c.json(problem(400, "Bad Request", "granularity must be daily|weekly|monthly"), 400);
+      return problemJson(c, problem(400, "Bad Request", "granularity must be daily|weekly|monthly", "invalid_params"));
     }
     // Defaults: no bounds => the full retained window (12 months) is returned.
     // Bounds are granularity-prefixed so the lexicographic range matches the
@@ -544,7 +565,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
     const from = fromRaw ? windowBound(granularity, fromRaw) : null;
     const to = toRaw ? windowBound(granularity, toRaw) : null;
     if ((fromRaw && !from) || (toRaw && !to)) {
-      return c.json(problem(400, "Bad Request", "from/to must be an ISO instant"), 400);
+      return problemJson(c, problem(400, "Bad Request", "from/to must be an ISO instant", "invalid_params"));
     }
     const rows = await withRlsContext(db.db, p, (tx) =>
       new PostgresHistoryStore(tx).listByUser(
@@ -570,7 +591,7 @@ export function createApiApp({ db, kek, now, enableDevSession, publicWebUrl }: A
   app.delete("/v1/sessions/:id", async (c) => {
     const p = c.get("principal");
     const n = await withRlsContext(db.db, p, (tx) => revokeSession(tx, c.req.param("id"), p.userId));
-    if (n === 0) return c.json(problem(404, "Not Found", "Session not found"), 404);
+    if (n === 0) return problemJson(c, problem(404, "Not Found", "Session not found", "not_found"));
     return c.json({ ok: true });
   });
 

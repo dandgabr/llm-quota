@@ -13,12 +13,13 @@
   --rose-300: #e0c4c4;
   --sky-300: #c7d4e8;
   --periwinkle-500: #3e63dd;
-  --fern-600: #3e7a5c;
-  --brick-600: #c44b3c;
-  --ochre-600: #a87c1f;
+  --fern-600: #2f6349;
+  --brick-600: #a53527;
+  --ochre-600: #7c5a12;
   --hairline: rgba(24, 20, 16, 0.13);
   --hairline-strong: rgba(24, 20, 16, 0.18);
   --divider: rgba(24, 20, 16, 0.08);
+  --scrim: rgba(24, 20, 16, 0.45);
 
   --surface-base: var(--bone-50);
   --surface-raised: var(--bone-100);
@@ -29,8 +30,11 @@
   --accent-action: var(--periwinkle-500);
   --accent-on-accent: #ffffff;
   --status-success: var(--fern-600);
+  --status-success-bg: var(--sage-300);
   --status-danger: var(--brick-600);
+  --status-danger-bg: var(--rose-300);
   --status-warning: var(--ochre-600);
+  --status-warning-bg: var(--sand-300);
 
   --chart-fill-primary: rgba(62, 99, 221, 0.14);
   --chart-fill-track: rgba(24, 20, 16, 0.06);
@@ -85,6 +89,7 @@ html[data-theme="dark"] {
   --hairline: rgba(242, 237, 228, 0.12);
   --hairline-strong: rgba(242, 237, 228, 0.18);
   --divider: rgba(242, 237, 228, 0.07);
+  --scrim: rgba(0, 0, 0, 0.55);
   --chart-fill-track: rgba(242, 237, 228, 0.08);
   --chart-gridline: rgba(242, 237, 228, 0.08);
 }
@@ -198,6 +203,33 @@ select {
   border-color: var(--hairline-strong);
 }
 
+/* Status tag: mono/uppercase micro-label with a tinted background (no pill/candy).
+   Status is always also conveyed by text, never colour alone. */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border: var(--border-hairline);
+  border-radius: var(--radius-control);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-secondary);
+  background: var(--surface-base);
+}
+.tag.is-ok {
+  color: var(--status-success);
+  background: var(--status-success-bg);
+  border-color: transparent;
+}
+.tag.is-blocked {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+  border-color: transparent;
+}
+
 /* Secondary / ghost control: transparent, raises luminance on hover (no shadow) */
 .btn-ghost {
   background: transparent;
@@ -205,6 +237,7 @@ select {
   border: var(--border-hairline);
   box-shadow: none;
   padding: var(--space-1) var(--space-3);
+  min-height: 44px;
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.04em;

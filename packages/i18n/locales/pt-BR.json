@@ -95,7 +95,8 @@
     "unblockedDone": "Usuário desbloqueado.",
     "selfGuard": "Você não pode mudar seu próprio perfil nem se bloquear.",
     "lastAdminGuard": "Você não pode remover o último administrador ativo.",
-    "loadError": "Não foi possível carregar os usuários."
+    "loadError": "Não foi possível carregar os usuários.",
+    "close": "Fechar"
   },
   "invites": {
     "title": "Convites pendentes",
@@ -109,6 +110,7 @@
     "expiresAt": "Expira em {date}",
     "sendHint": "Envie este link para a pessoa. É de uso único e expira em breve.",
     "role": "Perfil",
+    "linkLabel": "Link de convite",
     "loadError": "Não foi possível carregar os convites."
   },
   "errors": {

@@ -39,6 +39,8 @@ export const useAuthStore = defineStore("auth", {
     isAuthenticated: (s) => !!s.token,
     isAdmin: (s) => s.role === "admin",
     isSupervisor: (s) => s.role === "supervisor" || s.role === "admin",
+    /** Active UI locale (persisted preference; not part of the session). */
+    locale: () => safeGetItem("llm-quota.locale"),
   },
   actions: {
     /** Establish a session from an issued token + role. */

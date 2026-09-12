@@ -43,6 +43,13 @@
       "when": 1789182700000,
       "tag": "0005_user_mgmt_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789183300000,
+      "tag": "0006_phase_a_hardening",
+      "breakpoints": true
     }
   ]
 }

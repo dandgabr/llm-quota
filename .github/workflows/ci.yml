@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # Matches docker/compose.test.yaml so the same migration + RLS harness
+        # runs in CI (two roles; the app role is subject to FORCE RLS).
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: llmquota
+          POSTGRES_PASSWORD: llmquota-test
+          POSTGRES_DB: llm_quota_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U llmquota -d llm_quota_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      DATABASE_MAIN_URL: postgres://llmquota:llmquota-test@127.0.0.1:55432/llm_quota_test
+      DATABASE_APP_URL: postgres://llmquota_app:llmquota-app-test@127.0.0.1:55432/llm_quota_test
+      DATABASE_URL: postgres://llmquota:llmquota-test@127.0.0.1:55432/llm_quota_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Create the non-superuser app role
+        run: |
+          PGPASSWORD=llmquota-test psql -h 127.0.0.1 -p 55432 -U llmquota -d llm_quota_test \
+            -c "CREATE ROLE llmquota_app LOGIN PASSWORD 'llmquota-app-test';"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - name: Integration tests (real Postgres, FORCE RLS app role)
+        run: pnpm test:integration
+      - run: pnpm --filter @llm-quota/web exec playwright install --with-deps chromium
+      - name: Playwright usability suite (hermetic API stub)
+        run: pnpm --filter @llm-quota/web exec playwright test

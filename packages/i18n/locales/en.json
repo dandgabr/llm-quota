@@ -95,7 +95,8 @@
     "unblockedDone": "User unblocked.",
     "selfGuard": "You cannot change your own role or block yourself.",
     "lastAdminGuard": "You cannot remove the last active administrator.",
-    "loadError": "Could not load users."
+    "loadError": "Could not load users.",
+    "close": "Close"
   },
   "invites": {
     "title": "Pending invites",
@@ -108,7 +109,8 @@
     "empty": "No pending invites.",
     "expiresAt": "Expires {date}",
     "sendHint": "Send this link to the person. It is single-use and expires soon.",
-    "role": "Profile",
+    "role": "Role",
+    "linkLabel": "Invite link",
     "loadError": "Could not load invites."
   },
   "errors": {

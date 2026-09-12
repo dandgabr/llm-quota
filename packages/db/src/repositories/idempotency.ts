@@ -37,7 +37,19 @@ export class PostgresIdempotencyStore {
     opts: { db?: DB } = {},
   ): Promise<IdempotencyClaim> {
     const handle = opts.db ?? this.db;
-    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
+    // Expired rows are treated as absent: drop them first so a stale key can
+    // be reused and never replays forever.
+    await handle
+      .delete(idempotencyKeys)
+      .where(
+        and(
+          eq(idempotencyKeys.userId, userId),
+          eq(idempotencyKeys.key, key),
+          lt(idempotencyKeys.expiresAt, now),
+        ),
+      );
     const inserted = await handle
       .insert(idempotencyKeys)
       .values({ userId, key, requestHash, expiresAt })

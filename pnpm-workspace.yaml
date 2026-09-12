@@ -6,3 +6,8 @@ packages:
 allowBuilds:
   esbuild: true
   vue-demi: true
+
+# Security overrides (E1): force patched transitive versions workspace-wide.
+overrides:
+  esbuild: ">=0.25.0"
+  vite: ">=6.4.3"

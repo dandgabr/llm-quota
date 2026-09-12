@@ -104,8 +104,7 @@ describe("Phase B — audit trail", () => {
     expect(out).toEqual({ ok: "keep", nested: { value: 1 }, list: ["a", "b"] });
   });
 
-  it("list supports keyset pagination", async () => {
-    const adminId = await seedUser(t.super, { role: "admin", email: "page-admin@test.local" });
+  it("list supports keyset pagination", async () => {    const adminId = await seedUser(t.super, { role: "admin", email: "page-admin@test.local" });
     for (let i = 0; i < 5; i++) {
       await withRlsContext(
         t.app.db,
@@ -139,5 +138,32 @@ describe("Phase B — audit trail", () => {
     expect(page2.data.every((e) => !ids1.has(e.id))).toBe(true);
     void auditEvents;
     void eq;
+  });
+
+  it("F2: the hash chain verifies and detects tampering", async () => {
+    const adminId = await seedUser(t.super, { role: "admin", email: "chain@test.local" });
+    for (let i = 0; i < 3; i++) {
+      await withRlsContext(
+        t.app.db,
+        adminPrincipal(adminId),
+        (tx) => new PostgresAuditStore(tx).record({ action: "user.created", actorUserId: adminId }, { db: tx }),
+        { "app.users_admin_write": "true" },
+      );
+    }
+    const ok = await withRlsContext(
+      t.app.db,
+      adminPrincipal(adminId),
+      (tx) => new PostgresAuditStore(tx).verifyChain({ db: tx }),
+      { "app.is_admin": "true" },
+    );
+    expect(ok.ok).toBe(true);
+    expect(ok.checked).toBe(3);
+    // Tamper via superuser, then verify fails at the altered row.
+    await t.super.db.execute(sql`UPDATE audit_events SET action = 'user.deleted' WHERE id = (SELECT id FROM audit_events ORDER BY occurred_at LIMIT 1)`);
+    const broken = await t.super.db
+      .transaction((tx) => new PostgresAuditStore(tx).verifyChain({ db: tx }))
+      .then((r) => r);
+    expect(broken.ok).toBe(false);
+    expect(broken.brokenAt).toBeTruthy();
   });
 });

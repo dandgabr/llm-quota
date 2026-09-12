@@ -24,6 +24,8 @@ export const users = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     /** Soft delete: non-null means the account is removed from active service. */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    /** LGPD anonymization: non-null means PII was scrubbed (id kept for audit). */
+    anonymizedAt: timestamp("anonymized_at", { withTimezone: true }),
     /** External IdP subject (OIDC `sub` / SCIM externalId); reserved. */
     externalId: varchar("external_id", { length: 255 }),
     ...timestamps,

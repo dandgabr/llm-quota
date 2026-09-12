@@ -1,0 +1,1 @@
+ALTER TABLE "audit_events" ADD COLUMN "seq" bigserial NOT NULL;

@@ -714,8 +714,7 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
       ).toBe(200);
     });
 
-    it("MFA step-up: DELETE /auth/mfa/totp requires the current password", async () => {
-      const sid = await seedUser(t.super, { role: "user", email: "step@test.local" });
+    it("MFA step-up: DELETE /auth/mfa/totp requires the current password", async () => {      const sid = await seedUser(t.super, { role: "user", email: "step@test.local" });
       await seedUserCredential(t.super, sid, "step-password-1234");
       const stepToken = "wire-step-token";
       await createSession(t.super.db, {
@@ -742,6 +741,40 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
         headers: { Authorization: `Bearer ${stepToken}`, "X-Step-Up-Password": "step-password-1234" },
       });
       expect(ok.status).toBe(204);
+    });
+
+    it("F2: audit chain verifies clean and reports a tamper over the wire", async () => {
+      const adminId = await seedUser(t.super, { role: "admin", email: "chain-wire@test.local" });
+      const adminToken = "wire-chain-admin";
+      await createSession(t.super.db, {
+        userId: adminId,
+        tokenHash: hashToken(adminToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+      // A mutation to have at least one event.
+      await fetch(`${base}/v1/admin/invites`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "chain-invite@test.local", role: "user" }),
+      });
+      const verify = await fetch(`${base}/v1/audit/verify`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      expect(verify.status).toBe(200);
+      const body = (await verify.json()) as { ok: boolean };
+      expect(body.ok).toBe(true);
+      // A non-admin cannot verify.
+      const plainId = await seedUser(t.super, { role: "user", email: "chain-plain@test.local" });
+      const plainToken = "wire-chain-plain";
+      await createSession(t.super.db, {
+        userId: plainId,
+        tokenHash: hashToken(plainToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+      const denied = await fetch(`${base}/v1/audit/verify`, {
+        headers: { Authorization: `Bearer ${plainToken}` },
+      });
+      expect(denied.status).toBe(403);
     });
   });
 });

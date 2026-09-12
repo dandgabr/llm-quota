@@ -30,9 +30,9 @@ test.describe("admin user management", () => {
     await seededPage("/admin/users", { role: "admin" });
     const row = page.getByRole("row", { name: /admin@test.local/ });
     await row.getByRole("button", { name: /^delete$/i }).click();
-    await page.locator('[data-dialog="delete"] input').fill("admin@test.local");
-    await expect(page.locator('[data-dialog="delete"] button.danger-solid')).toBeEnabled();
-    await page.locator('[data-dialog="delete"] button.danger-solid').click();
+    await page.locator('[data-dialog="delete"] .modal > label input').fill("admin@test.local");
+    await expect(page.locator('[data-dialog="delete"] .modal-actions button.danger-solid')).toBeEnabled();
+    await page.locator('[data-dialog="delete"] .modal-actions button.danger-solid').click();
     await expect(page.getByText(/last active administrator/i)).toBeVisible();
   });
 

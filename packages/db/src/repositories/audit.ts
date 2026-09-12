@@ -5,7 +5,8 @@
  * It sanitizes metadata to an allowlist so secrets can never reach the trail.
  */
 
-import { and, desc, eq, lt, or, sql, type InferSelectModel } from "drizzle-orm";
+import { and, asc, desc, eq, lt, or, sql, type InferSelectModel } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import type { DB } from "../client.js";
 import { auditEvents } from "../schema/audit.js";
 
@@ -65,6 +66,34 @@ function sanitizeValue(v: unknown, depth: number): unknown {
   return undefined;
 }
 
+/** Deterministic JSON with recursively sorted keys (jsonb does not preserve order). */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
+}
+
+/** Deterministic SHA-256 over the chained event material (tamper-evidence). */
+export function computeEventHash(
+  prevHash: string | null,
+  input: AuditInput,
+  metadata: Record<string, unknown>,
+): string {
+  const canonical = stableStringify({
+    prev: prevHash,
+    action: input.action,
+    actor: input.actorUserId ?? null,
+    actorRole: input.actorRole ?? null,
+    targetType: input.targetType ?? null,
+    targetId: input.targetId ?? null,
+    metadata,
+    requestId: input.requestId ?? null,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
 function toView(row: AuditEventRow): AuditView {
   return {
     id: row.id,
@@ -97,14 +126,25 @@ export class PostgresAuditStore {
   /** Append one event (call inside the mutation's transaction). */
   async record(input: AuditInput, opts: { db?: DB } = {}): Promise<void> {
     const handle = opts.db ?? this.db;
+    const metadata = sanitizeMetadata(input.metadata ?? {});
+    // Tamper-evidence chain: serialize writers and link to the previous hash.
+    await handle.execute(sql`SELECT pg_advisory_xact_lock(hashtext('llm-quota:audit'))`);
+    const [prev] = await handle
+      .select({ eventHash: auditEvents.eventHash })
+      .from(auditEvents)
+      .orderBy(desc(auditEvents.seq))
+      .limit(1);
+    const prevHash = prev?.eventHash ?? null;
     await handle.insert(auditEvents).values({
       action: input.action,
       actorUserId: input.actorUserId ?? null,
       actorRole: input.actorRole ?? null,
       targetType: input.targetType ?? null,
       targetId: input.targetId ?? null,
-      metadata: sanitizeMetadata(input.metadata ?? {}),
+      metadata,
       requestId: input.requestId ?? null,
+      prevHash,
+      eventHash: computeEventHash(prevHash, input, metadata),
     });
   }
 
@@ -141,5 +181,63 @@ export class PostgresAuditStore {
     const nextCursor =
       hasMore && last ? `${last.occurredAt.toISOString()}|${last.id}` : null;
     return { data: page.map(toView), nextCursor };
+  }
+
+  /**
+   * Recompute the hash chain oldest→newest and report the first break. A
+   * `brokenAt` means an event was altered, deleted or reordered.
+   */
+  async verifyChain(opts: { db?: DB } = {}): Promise<{ ok: boolean; checked: number; brokenAt: string | null }> {
+    const handle = opts.db ?? this.db;
+    const rows = await handle
+      .select()
+      .from(auditEvents)
+      .orderBy(asc(auditEvents.seq));
+    let prevHash: string | null = null;
+    for (const row of rows) {
+      // Events written before the chain existed (no event_hash) are legacy;
+      // skip them so the chain is verified from the first chained event on.
+      if (!row.eventHash) {
+        prevHash = null;
+        continue;
+      }
+      if ((row.prevHash ?? null) !== prevHash) return { ok: false, checked: rows.length, brokenAt: row.id };
+      const expected = computeEventHash(
+        prevHash,
+        {
+          action: row.action,
+          actorUserId: row.actorUserId,
+          actorRole: row.actorRole,
+          targetType: row.targetType,
+          targetId: row.targetId,
+          requestId: row.requestId,
+        },
+        row.metadata ?? {},
+      );
+      if (row.eventHash !== expected) return { ok: false, checked: rows.length, brokenAt: row.id };
+      prevHash = row.eventHash;
+    }
+    return { ok: true, checked: rows.length, brokenAt: null };
+  }
+
+  /**
+   * Delete audit events older than the retention window through the
+   * SECURITY DEFINER `app_audit_sweep` (the app role is append-only, so it
+   * cannot DELETE directly). Call under the collector GUC.
+   */
+  async sweepViaFunction(retentionDays: number, opts: { db?: DB } = {}): Promise<number> {
+    const handle = opts.db ?? this.db;
+    const res = await handle.execute<{ n: number }>(
+      sql`SELECT app_audit_sweep(${retentionDays}) AS n`,
+    );
+    return res.rows[0]?.n ?? 0;
+  }
+
+  /** Delete audit events older than the retention window (the only app path). */
+  async sweep(retentionDays: number, now: Date = new Date()): Promise<number> {
+    const rows = await this.db.execute<{ id: string }>(
+      sql`DELETE FROM audit_events WHERE occurred_at < ${now} - make_interval(days => ${retentionDays}) RETURNING id`,
+    );
+    return rows.rows.length;
   }
 }

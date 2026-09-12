@@ -27,6 +27,7 @@ import {
   PostgresIdempotencyStore,
   PostgresInstanceStore,
   PostgresAuthStore,
+  PostgresAuditStore,
   PostgresQuotaStore,
   sweepSessions,
   type DbHandle,
@@ -476,6 +477,7 @@ export function startCollector(
       // rotated/expired sessions (E4/E5 retention).
       try {
         const authStore = new PostgresAuthStore(db.db, kek);
+        const auditStore = new PostgresAuditStore(db.db);
         const ttl = envInt("LOGIN_ATTEMPT_TTL_SECONDS", 86_400, 1);
         const sessionTtl = envInt("SESSION_RETENTION_SECONDS", 7 * 24 * 3600, 60);
         const attempts = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepLoginAttempts(ttl, now, { db: tx }), {
@@ -490,8 +492,22 @@ export function startCollector(
           (tx) => sweepSessions(tx, now, sessionTtl),
           { "app.is_collector": "true" },
         );
-        if (attempts || challenges || sessions) {
-          log(`[collector] auth sweep: ${attempts} attempts, ${challenges} challenges, ${sessions} sessions`);
+        // Audit retention (F2): only the SECURITY DEFINER function can delete
+        // audit rows (append-only for the app role).
+        const auditDays = envInt("AUDIT_RETENTION_DAYS", 365, 0);
+        let auditSwept = 0;
+        if (auditDays > 0) {
+          auditSwept = await withRlsContext(
+            db.db,
+            COLLECTOR,
+            (tx) => auditStore.sweepViaFunction(auditDays, { db: tx }),
+            { "app.is_collector": "true" },
+          );
+        }
+        if (attempts || challenges || sessions || auditSwept) {
+          log(
+            `[collector] auth sweep: ${attempts} attempts, ${challenges} challenges, ${sessions} sessions, ${auditSwept} audit`,
+          );
         }
       } catch (err) {
         log(`[collector] auth sweep error: ${String(err)}`);

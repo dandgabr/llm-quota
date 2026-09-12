@@ -120,6 +120,34 @@
       "when": 1789191525201,
       "tag": "0016_session_rotation_grace",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789191683087,
+      "tag": "0017_lgpd_purge_audit_chain",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789189300000,
+      "tag": "0018_audit_sweep_function",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789189400000,
+      "tag": "0019_credentials_admin_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1789192021200,
+      "tag": "0020_audit_chain_seq",
+      "breakpoints": true
     }
   ]
 }

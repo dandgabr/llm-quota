@@ -377,6 +377,23 @@ export class ApiClient {
     return this.handle<void>(await this.http.delete(`${this.base}/v1/admin/users/${id}`, this.auth()));
   }
 
+  /** LGPD purge: anonymize a user (step-up required). */
+  async purgeUser(id: string, currentPassword: string): Promise<void> {
+    return this.handle<void>(
+      await this.http.post(`${this.base}/v1/admin/users/${id}/purge`, JSON.stringify({ currentPassword }), {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
+  /** Verify the audit hash chain (admin). */
+  async verifyAudit(): Promise<{ ok: boolean; checked: number; brokenAt: string | null }> {
+    return this.handle(
+      await this.http.get(`${this.base}/v1/audit/verify`, this.auth()),
+    );
+  }
+
   async listInvites(): Promise<InviteView[]> {
     const body = await this.handle<{ data: InviteView[] }>(
       await this.http.get(`${this.base}/v1/admin/invites`, this.auth()),

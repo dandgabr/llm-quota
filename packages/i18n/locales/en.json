@@ -123,7 +123,10 @@
     "loadMore": "Load more",
     "loadError": "Could not load the audit trail.",
     "emptyFiltered": "No events match the filters.",
-    "clearFilters": "Clear filters"
+    "clearFilters": "Clear filters",
+    "verify": "Verify integrity",
+    "verifyOk": "Integrity verified across {count} events.",
+    "verifyBroken": "Chain broken at event {id}."
   },
   "users": {
     "title": "User management",
@@ -163,7 +166,12 @@
     "selfGuard": "You cannot change your own role or block yourself.",
     "lastAdminGuard": "You cannot remove the last active administrator.",
     "loadError": "Could not load users.",
-    "close": "Close"
+    "close": "Close",
+    "purge": "Anonymize permanently",
+    "purgeTitle": "Anonymize (LGPD)",
+    "purgeWarning": "Irreversibly removes personal data (name, email, credentials, MFA) while keeping the audit trail. Requires your password.",
+    "purged": "User anonymized.",
+    "purgeHasResources": "This user owns connections or history; remove or reassign them first."
   },
   "invites": {
     "title": "Pending invites",

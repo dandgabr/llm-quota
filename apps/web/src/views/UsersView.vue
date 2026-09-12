@@ -23,7 +23,7 @@ const createdInvite = ref<{ email: string; url: string } | null>(null);
 const copied = ref(false);
 
 const roleDialog = ref<{ user: UserView; role: Role } | null>(null);
-const deleteDialog = ref<{ user: UserView; confirm: string } | null>(null);
+const deleteDialog = ref<{ user: UserView; confirm: string; password: string } | null>(null);
 const dialogError = ref<string | null>(null);
 const busy = ref(false);
 
@@ -185,8 +185,31 @@ async function toggleBlock(user: UserView) {
 function openDelete(user: UserView) {
   dialogError.value = null;
   captureFocus();
-  deleteDialog.value = { user, confirm: "" };
-  focusFirstField('[data-dialog="delete"] input');
+  deleteDialog.value = { user, confirm: "", password: "" };
+  focusFirstField('[data-dialog="delete"] .modal > label input');
+}
+
+async function confirmPurge() {
+  if (!deleteDialog.value?.password) return;
+  const api = auth.api();
+  if (!api) return;
+  busy.value = true;
+  dialogError.value = null;
+  try {
+    await api.purgeUser(deleteDialog.value.user.id, deleteDialog.value.password);
+    users.value = users.value.filter((u) => u.id !== deleteDialog.value?.user.id);
+    notice.value = t("users.purged");
+    closeDialogs();
+  } catch (err) {
+    dialogError.value =
+      err instanceof ApiError && err.code === "last-admin"
+        ? t("users.lastAdminGuard")
+        : err instanceof ApiError && err.code === "conflict"
+          ? t("users.purgeHasResources")
+          : t("errors.generic");
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function confirmDelete() {
@@ -571,6 +594,28 @@ onMounted(() => void load());
         >
           {{ dialogError }}
         </p>
+        <details class="purge">
+          <summary>{{ t("users.purgeTitle") }}</summary>
+          <p class="hint">
+            {{ t("users.purgeWarning") }}
+          </p>
+          <label>
+            {{ t("settings.currentPassword") }}
+            <input
+              v-model="deleteDialog.password"
+              type="password"
+              autocomplete="current-password"
+            >
+          </label>
+          <button
+            type="button"
+            class="danger-solid"
+            :disabled="busy || !deleteDialog.password"
+            @click="confirmPurge"
+          >
+            {{ t("users.purge") }}
+          </button>
+        </details>
         <div class="modal-actions">
           <button
             type="button"

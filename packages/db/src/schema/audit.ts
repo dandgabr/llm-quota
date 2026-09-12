@@ -7,7 +7,7 @@
  * orphan event and a successful one is always recorded.
  */
 
-import { index, jsonb, pgEnum, pgTable, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { bigserial, index, jsonb, pgEnum, pgTable, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { users } from "./auth.js";
 
 /**
@@ -20,6 +20,7 @@ export const auditActionEnum = pgEnum("audit_action", [
   "user.blocked",
   "user.unblocked",
   "user.deleted",
+  "user.purged",
   "user.password_reset",
   "invite.created",
   "invite.revoked",
@@ -49,6 +50,8 @@ export const auditEvents = pgTable(
   "audit_events",
   {
     id: uuid("id").notNull().primaryKey().defaultRandom(),
+    /** Monotonic chain ordinal (stable insertion order for the hash chain). */
+    seq: bigserial("seq", { mode: "number" }).notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
     /** Actor; NULL for anonymous/system events (e.g. a failed login). */
     actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
@@ -61,6 +64,10 @@ export const auditEvents = pgTable(
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
     /** Correlates the event with the request/log line. */
     requestId: varchar("request_id", { length: 128 }),
+    /** Tamper-evidence: SHA-256 of the previous event's hash (chain). */
+    prevHash: varchar("prev_hash", { length: 64 }),
+    /** SHA-256 over (prev_hash || canonical event fields). */
+    eventHash: varchar("event_hash", { length: 64 }),
   },
   (t) => ({
     // Stable keyset cursor (occurred_at DESC, id DESC).

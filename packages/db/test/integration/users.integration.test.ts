@@ -222,4 +222,50 @@ describe("Phase A — user management RLS", () => {
     expect(found?.email).toBe("lookup@test.local");
     expect(found?.passwordHash).toContain("$scrypt$");
   });
+
+  it("F1: anonymize scrubs PII, credentials and MFA, keeping the id", async () => {
+    const adminId = await seedUser(t.super, { role: "admin", email: "anon-admin@test.local" });
+    const target = await seedUser(t.super, {
+      role: "user",
+      email: "anon-target@test.local",
+      passwordHash: "scrypt$placeholder",
+    });
+    const ok = await withRlsContext(
+      t.app.db,
+      adminPrincipal(adminId),
+      (tx) => new PostgresUserStore(tx).anonymize(target, { db: tx }),
+      { "app.users_admin_write": "true" },
+    );
+    expect(ok).toBe(true);
+    const [row] = await t.super.db
+      .execute<{ email: string; fname: string | null; anon: string | null; creds: number }>(
+        sql`SELECT u.email, u.first_name AS fname, u.anonymized_at AS anon,
+              (SELECT count(*)::int FROM user_credentials c WHERE c.user_id = u.id) AS creds
+            FROM users u WHERE u.id = ${target}`,
+      )
+      .then((r) => r.rows);
+    expect(row?.email).toBe(`deleted+${target}@invalid.local`);
+    expect(row?.fname).toBeNull();
+    expect(row?.anon).not.toBeNull();
+    expect(row?.creds).toBe(0);
+  });
+
+  it("F1: anonymize is idempotent (second call returns false)", async () => {
+    const adminId = await seedUser(t.super, { role: "admin", email: "anon2-admin@test.local" });
+    const target = await seedUser(t.super, { role: "user", email: "anon2@test.local" });
+    const first = await withRlsContext(
+      t.app.db,
+      adminPrincipal(adminId),
+      (tx) => new PostgresUserStore(tx).anonymize(target, { db: tx }),
+      { "app.users_admin_write": "true" },
+    );
+    const second = await withRlsContext(
+      t.app.db,
+      adminPrincipal(adminId),
+      (tx) => new PostgresUserStore(tx).anonymize(target, { db: tx }),
+      { "app.users_admin_write": "true" },
+    );
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+  });
 });

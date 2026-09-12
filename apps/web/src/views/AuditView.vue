@@ -12,6 +12,7 @@ const nextCursor = ref<string | null>(null);
 const loading = ref(true);
 const loadingMore = ref(false);
 const error = ref<string | null>(null);
+const notice = ref<string | null>(null);
 const expanded = ref<Set<string>>(new Set());
 const filters = reactive({ action: "", targetType: "" });
 
@@ -77,6 +78,24 @@ async function clearFilters() {
   await load();
 }
 
+const verifying = ref(false);
+async function verify() {
+  const api = auth.api();
+  if (!api) return;
+  verifying.value = true;
+  notice.value = null;
+  try {
+    const res = await api.verifyAudit();
+    notice.value = res.ok
+      ? t("audit.verifyOk", { count: res.checked })
+      : t("audit.verifyBroken", { id: res.brokenAt ?? "" });
+  } catch {
+    error.value = t("audit.loadError");
+  } finally {
+    verifying.value = false;
+  }
+}
+
 function metadataPairs(meta: Record<string, unknown>): [string, string][] {
   return Object.entries(meta).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]);
 }
@@ -119,8 +138,25 @@ onMounted(() => void load());
       >
         {{ t("audit.apply") }}
       </button>
+      <button
+        v-if="auth.isAdmin"
+        type="button"
+        class="btn-ghost"
+        :disabled="verifying"
+        @click="verify"
+      >
+        {{ t("audit.verify") }}
+      </button>
     </div>
 
+    <p
+      v-if="notice"
+      class="notice"
+      role="status"
+      aria-live="polite"
+    >
+      {{ notice }}
+    </p>
     <p
       v-if="error"
       class="error"

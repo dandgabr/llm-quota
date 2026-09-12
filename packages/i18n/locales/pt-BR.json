@@ -124,7 +124,10 @@
     "loadMore": "Carregar mais",
     "loadError": "Não foi possível carregar a auditoria.",
     "emptyFiltered": "Nenhum evento corresponde aos filtros.",
-    "clearFilters": "Limpar filtros"
+    "clearFilters": "Limpar filtros",
+    "verify": "Verificar integridade",
+    "verifyOk": "Integridade verificada em {count} eventos.",
+    "verifyBroken": "Cadeia quebrada no evento {id}."
   },
   "users": {
     "title": "Gerenciamento de usuários",
@@ -164,7 +167,12 @@
     "selfGuard": "Você não pode mudar seu próprio perfil nem se bloquear.",
     "lastAdminGuard": "Você não pode remover o último administrador ativo.",
     "loadError": "Não foi possível carregar os usuários.",
-    "close": "Fechar"
+    "close": "Fechar",
+    "purge": "Anonimizar definitivamente",
+    "purgeTitle": "Anonimizar (LGPD)",
+    "purgeWarning": "Remove irreversivelmente os dados pessoais (nome, e-mail, credenciais, MFA) mantendo a trilha de auditoria. Exige sua senha.",
+    "purged": "Usuário anonimizado.",
+    "purgeHasResources": "Este usuário possui conexões ou histórico; remova ou reatribua antes."
   },
   "invites": {
     "title": "Convites pendentes",

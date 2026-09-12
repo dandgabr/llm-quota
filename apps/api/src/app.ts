@@ -1258,6 +1258,61 @@ export function createApiApp({
     return c.body(null, 204);
   });
 
+  // LGPD purge (F1): anonymize PII keeping the id for audit. Blocked while the
+  // target owns resources or is the last active admin. Requires step-up.
+  app.post("/v1/admin/users/:id/purge", async (c) => {
+    const p = requireAdmin(c);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
+    const body = await c.req.json<{ currentPassword?: string }>().catch(() => null);
+    const gate = await requireStepUp(c, p, body?.currentPassword);
+    if (!gate.ok) return problemJson(c, gate.problem);
+    const target = c.req.param("id");
+    if (target === p.userId) {
+      return problemJson(c, problem(409, "Conflict", "cannot purge yourself", "conflict"));
+    }
+    const result = await withRlsContext(
+      db.db,
+      p,
+      async (tx) => {
+        await userStore.lockLastAdminGuard(tx);
+        const current = await userStore.findById(target, { db: tx });
+        if (!current) return "not_found" as const;
+        if (current.role === "admin") {
+          const remaining = await userStore.countActiveAdmins({ db: tx, excludeUserId: target });
+          if (remaining < 1) return "last_admin" as const;
+        }
+        const owned = await userStore.ownedResourceCounts(target, { db: tx });
+        if (owned.connections > 0 || owned.aggregates > 0) return "has_resources" as const;
+        const ok = await userStore.anonymize(target, { db: tx });
+        if (ok) {
+          await auditStore.record(
+            {
+              action: "user.purged",
+              actorUserId: p.userId,
+              actorRole: p.role,
+              targetType: "user",
+              targetId: target,
+              requestId: c.get("requestId"),
+            },
+            { db: tx },
+          );
+        }
+        return ok ? ("ok" as const) : ("not_found" as const);
+      },
+      { "app.users_admin_write": "true" },
+    );
+    if (result === "last_admin") {
+      return problemJson(c, problem(409, "Conflict", "cannot purge the last active admin", "last_admin"));
+    }
+    if (result === "has_resources") {
+      return problemJson(c, problem(409, "Conflict", "user owns resources; block or remove them first", "conflict"));
+    }
+    if (result === "not_found") {
+      return problemJson(c, problem(404, "Not Found", "User not found", "not_found"));
+    }
+    return c.body(null, 204);
+  });
+
   // ---- Invites ------------------------------------------------------------
   app.get("/v1/admin/invites", async (c) => {
     const p = requireAdmin(c);
@@ -1570,6 +1625,21 @@ export function createApiApp({
       { "app.is_supervisor_admin": "true" },
     );
     return c.json({ data: result.data, has_more: result.nextCursor !== null, next_cursor: result.nextCursor });
+  });
+
+  // Verify the audit hash chain (admin): detects tampering/deletion/reorder.
+  app.get("/v1/audit/verify", async (c) => {
+    const p = c.get("principal");
+    if (!p.isAdmin) {
+      return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
+    }
+    const result = await withRlsContext(
+      db.db,
+      p,
+      (tx) => auditStore.verifyChain({ db: tx }),
+      { "app.is_admin": "true" },
+    );
+    return c.json(result, result.ok ? 200 : 409);
   });
 
   // QUERY (RFC 10008) + GET alias share one handler (ADR-008). Params come

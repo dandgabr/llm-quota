@@ -9,7 +9,7 @@
 import { and, desc, eq, isNull, ne, sql, type InferSelectModel } from "drizzle-orm";
 import type { Role } from "@llm-quota/shared";
 import type { DB } from "../client.js";
-import { userCredentials, users } from "../schema/auth.js";
+import { mfaRecoveryCodes, totpSecrets, userCredentials, users } from "../schema/auth.js";
 import { spendingAggregates, userSessions } from "../schema/history.js";
 import { connections } from "../schema/quotas.js";
 
@@ -201,8 +201,7 @@ export class PostgresUserStore {
     return true;
   }
 
-  /** Count a user's owned connections + spending aggregates (purge guard). */
-  async ownedResourceCounts(
+  /** Count a user's owned connections + spending aggregates (purge guard). */  async ownedResourceCounts(
     id: string,
     opts: { db?: DB } = {},
   ): Promise<{ connections: number; aggregates: number }> {
@@ -249,5 +248,36 @@ export class PostgresUserStore {
   /** Acquire the advisory lock that serializes last-admin guards. */
   async lockLastAdminGuard(tx: DB): Promise<void> {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${LAST_ADMIN_LOCK})`);
+  }
+
+  /**
+   * LGPD anonymization (F1): scrub PII while keeping `users.id` for audit
+   * correlation. Removes credentials, MFA factors and recovery codes and
+   * revokes sessions. Caller runs it under the admin RLS context after the
+   * guard checks (not last admin, no owned resources).
+   */
+  async anonymize(id: string, opts: { db?: DB } = {}): Promise<boolean> {
+    const handle = opts.db ?? this.db;
+    const rows = await handle
+      .update(users)
+      .set({
+        email: sql`'deleted+' || ${id} || '@invalid.local'`,
+        firstName: null,
+        lastName: null,
+        emailVerifiedAt: null,
+        externalId: null,
+        isActive: false,
+        deletedAt: new Date(),
+        anonymizedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(users.id, id), isNull(users.anonymizedAt)))
+      .returning({ id: users.id });
+    if (rows.length === 0) return false;
+    await handle.delete(userCredentials).where(eq(userCredentials.userId, id));
+    await handle.delete(totpSecrets).where(eq(totpSecrets.userId, id));
+    await handle.delete(mfaRecoveryCodes).where(eq(mfaRecoveryCodes.userId, id));
+    await handle.update(userSessions).set({ revoked: true }).where(eq(userSessions.userId, id));
+    return true;
   }
 }

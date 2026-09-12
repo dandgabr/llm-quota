@@ -31,7 +31,9 @@ onMounted(() => {
       <span class="micro">{{ t("admin.users") }}</span>
       <p>Connections: {{ quota.connections.length }}</p>
       <p class="hint">
-        Users/identity providers land with the admin API (Phase 7).
+        <RouterLink to="/admin/users">
+          {{ t("users.title") }}
+        </RouterLink>
       </p>
     </div>
   </section>

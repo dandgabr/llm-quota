@@ -46,6 +46,8 @@ export interface ServerConfig {
   kek: Dek;
   /** Restricted origin for CORS (from `WEB_ORIGIN`). */
   webOrigin?: string;
+  /** Built SPA directory served same-origin (from `WEB_DIST_PATH`). */
+  webDistPath?: string;
   /** TLS cert paths (set => HTTPS). */
   tlsCertPath?: string;
   tlsKeyPath?: string;
@@ -59,6 +61,11 @@ function assertProdCertAllowed(certPath: string, env: string): void {
   }
 }
 
+/** Redact secret-bearing path segments (e.g. an invite token) before logging. */
+export function redactPath(path: string): string {
+  return path.replace(/\/(invites?)\/[A-Za-z0-9._~-]{8,}/gi, "/$1/[redacted]");
+}
+
 /** ASVS V16-aligned audit logger (structured; never logs request bodies). */
 export function auditLogger(log = (line: string) => console.log(line)) {
   return (c: Context, next: Next) => {
@@ -68,7 +75,7 @@ export function auditLogger(log = (line: string) => console.log(line)) {
         JSON.stringify({
           ts: new Date().toISOString(),
           method: c.req.method,
-          path: c.req.path,
+          path: redactPath(c.req.path),
           status: c.res.status,
           ms: Date.now() - start,
         }),
@@ -123,14 +130,22 @@ export function securityHeaders(tls: boolean) {
 /**
  * Fixed-window per-IP rate limiter (no deps) for the public `/auth/*` surface.
  * Rejects with RFC 7807 429 once `max` requests hit within `windowMs`.
+ *
+ * IP resolution only honours `X-Forwarded-For`/`X-Real-IP` when `TRUST_PROXY`
+ * is enabled (the process sits behind a trusted reverse proxy); otherwise the
+ * socket address is used, so a client cannot forge its budget with a header.
  */
-export function rateLimitAuth(max = 30, windowMs = 60_000) {
+export function rateLimitAuth(max = 30, windowMs = 60_000, trustProxy = false) {
   const hits = new Map<string, { count: number; resetAt: number }>();
   return async (c: Context, next: Next) => {
     if (!c.req.path.startsWith("/auth/")) return next();
+    const forwarded = trustProxy
+      ? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip")
+      : undefined;
     const ip =
-      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-      c.req.header("x-real-ip") ||
+      forwarded ||
+      (c.env as { incoming?: { socket?: { remoteAddress?: string } } })?.incoming?.socket
+        ?.remoteAddress ||
       "unknown";
     const now = Date.now();
     let entry = hits.get(ip);
@@ -145,7 +160,11 @@ export function rateLimitAuth(max = 30, windowMs = 60_000) {
     }
     if (entry.count > max) {
       return c.json(
-        { type: "about:blank", title: "Too Many Requests", status: 429 },
+        {
+          type: "https://api.llm-quota.dev/errors/rate-limited",
+          title: "Too Many Requests",
+          status: 429,
+        },
         429,
       );
     }
@@ -159,12 +178,95 @@ export function bodyLimit(maxBytes = 64 * 1024) {
     const len = Number(c.req.header("content-length") ?? 0);
     if (len > maxBytes) {
       return c.json(
-        { type: "about:blank", title: "Payload Too Large", status: 413 },
+        {
+          type: "https://api.llm-quota.dev/errors/payload-too-large",
+          title: "Payload Too Large",
+          status: 413,
+        },
         413,
       );
     }
     return next();
   };
+}
+
+const CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
+  ".webmanifest": "application/manifest+json",
+};
+
+/**
+ * Serve the built SPA from `WEB_DIST_PATH` (same-origin single-port deploy).
+ *
+ * Only GET/HEAD requests outside `/v1|/auth|/health` are served; anything else
+ * falls through to the API (so unknown API paths still return RFC 7807 404, not
+ * index.html). Dotfiles and source maps are never served, and the resolved path
+ * must stay under the dist root (path-traversal guard). When no SPA is
+ * configured, the API is unaffected.
+ */
+export function spaStatic(distPath: string | undefined) {
+  const root = distPath ? resolve(distPath) : null;
+  return async (c: Context, next: Next) => {
+    if (!root) return next();
+    const method = c.req.method;
+    if (method !== "GET" && method !== "HEAD") return next();
+    const path = c.req.path;
+    if (isApiSegment(path)) return next();
+    // Resolve the request to a filesystem path and confine it to the root.
+    const rel = decodeURIComponent(path).replace(/^\/+/, "");
+    const candidate = resolve(root, rel);
+    if (candidate !== root && !candidate.startsWith(root + "/")) return next();
+    if (/(^|\/)\.[^/]/.test(rel) || rel.endsWith(".map")) return next();
+
+    const send = async (filePath: string, immutable: boolean): Promise<Response> => {
+      const { readFile } = await import("node:fs/promises");
+      const ext = filePath.slice(filePath.lastIndexOf("."));
+      c.header("Content-Type", CONTENT_TYPES[ext] ?? "application/octet-stream");
+      c.header("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "no-store");
+      c.header("Referrer-Policy", "no-referrer");
+      c.header("X-Frame-Options", "DENY");
+      c.header(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      );
+      const body = await readFile(filePath);
+      return c.body(body, 200);
+    };
+
+    try {
+      const { stat } = await import("node:fs/promises");
+      const info = await stat(candidate);
+      if (info.isFile()) return send(candidate, /\/assets\//.test(path));
+    } catch {
+      // fall through to the SPA fallback
+    }
+    // SPA fallback: unknown non-API GET => index.html (client-side routing).
+    const indexPath = resolve(root, "index.html");
+    try {
+      const { stat } = await import("node:fs/promises");
+      if ((await stat(indexPath)).isFile()) return send(indexPath, false);
+    } catch {
+      // no built SPA present
+    }
+    return next();
+  };
+}
+
+/** True for paths owned by the API (never served the SPA fallback). */
+export function isApiSegment(path: string): boolean {
+  return ["/v1", "/auth", "/health"].some((p) => path === p || path.startsWith(`${p}/`));
 }
 
 export interface Started {
@@ -183,13 +285,17 @@ export function buildServer(config: ServerConfig): Started {
   // Wrap the API app in a root app so CORS + audit middleware run BEFORE the
   // route handlers (registering `use` after routes would never execute them —
   // terminal route handlers win in Hono's registration-order composition).
-  const app = createApiApp({ db: config.db, kek: config.kek });
+  const app = createApiApp({ db: config.db, kek: config.kek, publicWebUrl: process.env.PUBLIC_WEB_URL });
   const root = new Hono();
   root.use("*", securityHeaders(tls));
   root.use("*", bodyLimit());
-  root.use("*", rateLimitAuth());
+  root.use("*", rateLimitAuth(30, 60_000, process.env.TRUST_PROXY === "1"));
   root.use("*", corsOnce(config.webOrigin));
   root.use("*", auditLogger(config.logger));
+  // SPA static serving must be registered on the ROOT before the API route:
+  // mounting inside `app` would put assets behind the bearer middleware. It
+  // falls through for /v1|/auth|/health so those still return API responses.
+  root.use("*", spaStatic(config.webDistPath));
   root.route("/", app);
 
   const server = serve(
@@ -358,6 +464,7 @@ export function start(): Started & { stopCollector(): void } {
     db,
     kek,
     webOrigin: env.WEB_ORIGIN,
+    webDistPath: env.WEB_DIST_PATH,
     tlsCertPath: env.TLS_CERT_PATH,
     tlsKeyPath: env.TLS_KEY_PATH,
     logger: log,

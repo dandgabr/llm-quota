@@ -11,3 +11,4 @@ export * from "./totp.js";
 export * from "./webauthn.js";
 export * from "./oidc.js";
 export * from "./session.js";
+export * from "./password.js";

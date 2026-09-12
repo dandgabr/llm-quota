@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { sql } from "drizzle-orm";
 import { createDb, type DbHandle } from "../../src/client.js";
-import { users } from "../../src/schema/auth.js";
+import { users, userCredentials } from "../../src/schema/auth.js";
 import { connections } from "../../src/schema/quotas.js";
 import { userSessions } from "../../src/schema/history.js";
 import { quotaProviders } from "../../src/schema/quotas.js";
@@ -66,14 +66,16 @@ export async function setupTestDb(opts: { migrate?: boolean } = {}): Promise<Tes
 export async function resetDatabase(superH: DbHandle): Promise<void> {
   await superH.db.execute(sql`
     TRUNCATE TABLE user_sessions, spending_aggregates, quota_snapshots, quota_sessions,
-      connections, quota_providers, totp_secrets, webauthn_credentials, users RESTART IDENTITY CASCADE
+      connections, quota_providers, totp_secrets, webauthn_credentials,
+      user_credentials, user_invites, idempotency_keys, instance_settings,
+      users RESTART IDENTITY CASCADE
   `);
 }
 
 /** Insert a user via the superuser handle (bypasses RLS). Returns the user id. */
 export async function seedUser(
   superH: DbHandle,
-  input: { role?: "user" | "supervisor" | "admin"; email?: string },
+  input: { role?: "user" | "supervisor" | "admin"; email?: string; passwordHash?: string },
 ): Promise<string> {
   const email = input.email ?? `${input.role ?? "user"}-${Date.now()}@test.local`;
   const [row] = await superH.db
@@ -86,6 +88,11 @@ export async function seedUser(
     })
     .returning({ id: users.id });
   if (!row) throw new Error("seedUser failed");
+  if (input.passwordHash) {
+    await superH.db
+      .insert(userCredentials)
+      .values({ userId: row.id, passwordHash: input.passwordHash, passwordUpdatedAt: new Date() });
+  }
   return row.id;
 }
 

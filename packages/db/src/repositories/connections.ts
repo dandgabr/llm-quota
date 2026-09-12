@@ -188,8 +188,14 @@ export class PostgresConnectionStore {
    * Update a connection's label (no secret change). Returns the number of rows
    * updated (0 when not found / not owned), so the API can map to RFC 7807 404.
    */
-  async updateLabel(id: string, userId: string, label: string): Promise<number> {
-    const result = await this.db
+  async updateLabel(
+    id: string,
+    userId: string,
+    label: string,
+    opts: { db?: DB } = {},
+  ): Promise<number> {
+    const handle = opts.db ?? this.db;
+    const result = await handle
       .update(connections)
       .set({ label, updatedAt: new Date() })
       .where(and(eq(connections.id, id), eq(connections.userId, userId)))
@@ -199,10 +205,12 @@ export class PostgresConnectionStore {
 
   /**
    * Delete a connection by id (owner-scoped). Returns the number of rows removed
-   * (0 when not found / not owned) for RFC 7807 mapping.
+   * (0 when not found / not owned) for RFC 7807 mapping. Pass `opts.db` with the
+   * RLS transaction handle so the app-role pool's policies apply.
    */
-  async remove(id: string, userId: string): Promise<number> {
-    const result = await this.db
+  async remove(id: string, userId: string, opts: { db?: DB } = {}): Promise<number> {
+    const handle = opts.db ?? this.db;
+    const result = await handle
       .delete(connections)
       .where(and(eq(connections.id, id), eq(connections.userId, userId)))
       .returning({ id: connections.id });

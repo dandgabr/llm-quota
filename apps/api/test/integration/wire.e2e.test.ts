@@ -263,4 +263,78 @@ describe("API E2E over the wire (real server + real Postgres)", () => {
     expect(body.state).toBeTruthy();
     expect(body.code_verifier).toBeUndefined();
   });
+
+  describe("Phase A — admin user management over the wire", () => {
+    let adminToken: string;
+    let adminId: string;
+
+    beforeAll(async () => {
+      adminId = await seedUser(t.super, { role: "admin", email: "wire-admin@test.local" });
+      adminToken = "wire-token-admin-123";
+      await createSession(t.super.db, {
+        userId: adminId,
+        tokenHash: hashToken(adminToken),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+    });
+
+    const adminAuth = () => ({ Authorization: `Bearer ${adminToken}` });
+
+    it("admin lists users and invites; non-admin is forbidden", async () => {
+      const ok = await fetch(`${base}/v1/admin/users`, { headers: adminAuth() });
+      expect(ok.status).toBe(200);
+      const body = (await ok.json()) as { data: { email: string }[] };
+      expect(body.data.some((u) => u.email === "wire@test.local")).toBe(true);
+
+      const denied = await fetch(`${base}/v1/admin/users`, { headers: auth() });
+      expect(denied.status).toBe(403);
+    });
+
+    it("admin creates an invite (201) and the link is single-use", async () => {
+      const res = await fetch(`${base}/v1/admin/invites`, {
+        method: "POST",
+        headers: { ...adminAuth(), "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "invitee@test.local", role: "user" }),
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { inviteUrl: string; invite: { email: string } };
+      expect(body.invite.email).toBe("invitee@test.local");
+      expect(body.inviteUrl).toContain("#token=");
+    });
+
+    it("inviting an existing email returns 409 user-exists", async () => {
+      const res = await fetch(`${base}/v1/admin/invites`, {
+        method: "POST",
+        headers: { ...adminAuth(), "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "wire@test.local", role: "user" }),
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { type: string };
+      expect(body.type).toContain("user-exists");
+    });
+
+    it("admin cannot delete themselves (409 conflict)", async () => {
+      const res = await fetch(`${base}/v1/admin/users/${adminId}`, {
+        method: "DELETE",
+        headers: adminAuth(),
+      });
+      expect(res.status).toBe(409);
+    });
+
+    it("a duplicate Idempotency-Key replays the invite response", async () => {
+      const key = "idem-key-abcd1234";
+      const opts = {
+        method: "POST",
+        headers: { ...adminAuth(), "Content-Type": "application/json", "Idempotency-Key": key },
+        body: JSON.stringify({ email: "idem-target@test.local", role: "user" }),
+      };
+      const first = await fetch(`${base}/v1/admin/invites`, opts);
+      expect(first.status).toBe(201);
+      const firstBody = (await first.json()) as { invite: { id: string } };
+      const second = await fetch(`${base}/v1/admin/invites`, opts);
+      expect(second.status).toBe(201);
+      const secondBody = (await second.json()) as { invite: { id: string } };
+      expect(secondBody.invite.id).toBe(firstBody.invite.id);
+    });
+  });
 });

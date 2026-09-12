@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { reactive, watch } from "vue";
+import { useRouter } from "vue-router";
 import { createTranslator } from "@llm-quota/i18n";
 import { useTranslator, setTranslator } from "./lib/i18n.js";
 import { theme } from "./lib/theme.js";
+import { useAuthStore } from "./stores/auth.js";
+import { safeGetItem, safeSetItem } from "./lib/storage.js";
 
 const t = useTranslator();
+const auth = useAuthStore();
+const router = useRouter();
 const ui = reactive({
-  locale: (localStorage.getItem("llm-quota.locale") as "en" | "pt-BR") ?? "en",
+  locale: (safeGetItem("llm-quota.locale") as "en" | "pt-BR") ?? "en",
 });
 const { ui: themeUi, toggle, init } = theme;
 
@@ -25,7 +30,12 @@ watch(
 
 function switchLocale(next: "en" | "pt-BR") {
   ui.locale = next;
-  localStorage.setItem("llm-quota.locale", next);
+  safeSetItem("llm-quota.locale", next);
+}
+
+function logout() {
+  auth.logout();
+  void router.push({ name: "login" });
 }
 </script>
 
@@ -33,11 +43,25 @@ function switchLocale(next: "en" | "pt-BR") {
   <div class="shell">
     <header class="topbar">
       <strong class="brand">{{ t("app.title") }}</strong>
-      <nav class="nav">
+      <nav
+        v-if="auth.isAuthenticated"
+        class="nav"
+      >
         <RouterLink to="/">{{ t("nav.dashboard") }}</RouterLink>
         <RouterLink to="/connections">{{ t("nav.connections") }}</RouterLink>
         <RouterLink to="/history">{{ t("nav.history") }}</RouterLink>
-        <RouterLink to="/admin">{{ t("nav.admin") }}</RouterLink>
+        <RouterLink
+          v-if="auth.isSupervisor"
+          to="/admin"
+        >
+          {{ t("nav.admin") }}
+        </RouterLink>
+        <RouterLink
+          v-if="auth.isAdmin"
+          to="/admin/users"
+        >
+          {{ t("admin.users") }}
+        </RouterLink>
       </nav>
       <span class="controls">
         <button class="btn-ghost" type="button" aria-label="Toggle color theme" @click="toggle()">
@@ -57,6 +81,14 @@ function switchLocale(next: "en" | "pt-BR") {
             PT-BR
           </option>
         </select>
+        <button
+          v-if="auth.isAuthenticated"
+          class="btn-ghost"
+          type="button"
+          @click="logout"
+        >
+          {{ t("auth.logout") }}
+        </button>
       </span>
     </header>
     <main class="content">

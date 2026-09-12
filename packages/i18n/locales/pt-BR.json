@@ -58,9 +58,64 @@
     "users": "Usuários",
     "identityProviders": "Provedores de identidade"
   },
+  "users": {
+    "title": "Gerenciamento de usuários",
+    "subtitle": "Convide pessoas e gerencie perfis e acesso.",
+    "invite": "Convidar usuário",
+    "email": "E-mail",
+    "name": "Nome",
+    "role": "Perfil",
+    "status": "Status",
+    "password": "Senha",
+    "created": "Criado em",
+    "actions": "Ações",
+    "active": "Ativo",
+    "blocked": "Bloqueado",
+    "passwordSet": "Definida",
+    "passwordNotSet": "Não definida",
+    "empty": "Nenhum usuário ainda.",
+    "emptyCta": "Convidar o primeiro usuário",
+    "roles": {
+      "user": "Usuário",
+      "supervisor": "Supervisor",
+      "admin": "Administrador"
+    },
+    "changeRole": "Mudar perfil",
+    "changeRoleTitle": "Mudar perfil de {name}",
+    "changeRoleImpact": "Isso altera imediatamente o que {name} pode ver e fazer.",
+    "block": "Bloquear",
+    "unblock": "Desbloquear",
+    "delete": "Excluir",
+    "deleteTitle": "Excluir {name}?",
+    "deleteWarning": "A conta perde o acesso imediatamente e mantém o histórico. Isso pode ser revertido por um administrador.",
+    "deleteConfirmLabel": "Digite o e-mail para confirmar",
+    "deleted": "Usuário excluído.",
+    "roleUpdated": "Perfil atualizado.",
+    "blockedDone": "Usuário bloqueado.",
+    "unblockedDone": "Usuário desbloqueado.",
+    "selfGuard": "Você não pode mudar seu próprio perfil nem se bloquear.",
+    "lastAdminGuard": "Você não pode remover o último administrador ativo.",
+    "loadError": "Não foi possível carregar os usuários."
+  },
+  "invites": {
+    "title": "Convites pendentes",
+    "created": "Convite criado.",
+    "createdFor": "Convite pronto para {email}.",
+    "copyLink": "Copiar link",
+    "copied": "Link copiado.",
+    "revoke": "Revogar",
+    "revoked": "Convite revogado.",
+    "empty": "Nenhum convite pendente.",
+    "expiresAt": "Expira em {date}",
+    "sendHint": "Envie este link para a pessoa. É de uso único e expira em breve.",
+    "role": "Perfil",
+    "loadError": "Não foi possível carregar os convites."
+  },
   "errors": {
     "generic": "Algo deu errado.",
     "unauthorized": "Você não está autorizado a executar esta ação.",
-    "connectionNotFound": "Conexão não encontrada."
+    "connectionNotFound": "Conexão não encontrada.",
+    "userExists": "Este e-mail já possui uma conta.",
+    "invalidEmail": "Informe um e-mail válido."
   }
 }

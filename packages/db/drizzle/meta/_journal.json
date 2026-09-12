@@ -29,6 +29,20 @@
       "when": 1789174964553,
       "tag": "0003_session_auth_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789182678286,
+      "tag": "0004_user_management",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789182700000,
+      "tag": "0005_user_mgmt_policies",
+      "breakpoints": true
     }
   ]
 }

@@ -72,11 +72,12 @@ export async function resolvePrincipal(
     }
     await tx.execute(sql`SELECT set_config('app.user_id', ${session.userId}, true)`);
     const [user] = await tx
-      .select({ role: users.role, isActive: users.isActive })
+      .select({ role: users.role, isActive: users.isActive, deletedAt: users.deletedAt })
       .from(users)
       .where(eq(users.id, session.userId))
       .limit(1);
-    if (!user || !user.isActive) return null;
+    // Soft-deleted accounts must not authenticate (deleted_at wins over isActive).
+    if (!user || !user.isActive || user.deletedAt) return null;
     return {
       userId: session.userId,
       role: user.role as Role,

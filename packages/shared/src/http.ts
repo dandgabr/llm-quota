@@ -23,6 +23,17 @@ export interface HttpClient {
     body: URLSearchParams | string,
     headers?: Record<string, string>,
   ): Promise<HttpResponse>;
+  put(
+    url: string,
+    body: URLSearchParams | string,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse>;
+  patch(
+    url: string,
+    body: URLSearchParams | string,
+    headers?: Record<string, string>,
+  ): Promise<HttpResponse>;
+  delete(url: string, headers?: Record<string, string>): Promise<HttpResponse>;
 }
 
 /** The fetch-like function injected into `createFetchHttpClient`. */
@@ -69,22 +80,34 @@ export const createFetchHttpClient = (
       return handle(await doFetch(url, { method: "GET", headers, signal: AbortSignal.timeout(timeoutMs) }));
     },
     async post(url, body, headers) {
-      const init: {
-        method?: string;
-        headers?: Record<string, string>;
-        body?: string;
-        signal?: AbortSignal;
-      } = {
-        method: "POST",
-        headers,
-        signal: AbortSignal.timeout(timeoutMs),
-      };
-      if (body instanceof URLSearchParams) {
-        init.body = body.toString();
-      } else if (typeof body === "string") {
-        init.body = body;
-      }
-      return handle(await doFetch(url, init));
+      return handle(await doFetch(url, withBody("POST", body, headers, timeoutMs)));
+    },
+    async put(url, body, headers) {
+      return handle(await doFetch(url, withBody("PUT", body, headers, timeoutMs)));
+    },
+    async patch(url, body, headers) {
+      return handle(await doFetch(url, withBody("PATCH", body, headers, timeoutMs)));
+    },
+    async delete(url, headers) {
+      return handle(await doFetch(url, { method: "DELETE", headers, signal: AbortSignal.timeout(timeoutMs) }));
     },
   };
 };
+
+/** Build a fetch init carrying the optional string/URLSearchParams body. */
+function withBody(
+  method: string,
+  body: URLSearchParams | string,
+  headers: Record<string, string> | undefined,
+  timeoutMs: number,
+): { method: string; headers?: Record<string, string>; body?: string; signal: AbortSignal } {
+  const init: {
+    method: string;
+    headers?: Record<string, string>;
+    body?: string;
+    signal: AbortSignal;
+  } = { method, headers, signal: AbortSignal.timeout(timeoutMs) };
+  if (body instanceof URLSearchParams) init.body = body.toString();
+  else if (typeof body === "string") init.body = body;
+  return init;
+}

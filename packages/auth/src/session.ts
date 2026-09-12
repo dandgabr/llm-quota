@@ -23,6 +23,12 @@ export function issueSessionToken(secret: string): SessionToken {
   return { token, hash, signature };
 }
 
+/** Issue an opaque one-time invite/reset token and its at-rest hash. */
+export function issueInviteToken(): { token: string; hash: string } {
+  const token = randomBytes(32).toString("base64url");
+  return { token, hash: hashToken(token) };
+}
+
 /** SHA-256 digest of a token (for storage + lookup). */
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");

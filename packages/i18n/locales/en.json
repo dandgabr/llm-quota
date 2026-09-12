@@ -58,9 +58,64 @@
     "users": "Users",
     "identityProviders": "Identity providers"
   },
+  "users": {
+    "title": "User management",
+    "subtitle": "Invite people and manage roles and access.",
+    "invite": "Invite user",
+    "email": "Email",
+    "name": "Name",
+    "role": "Role",
+    "status": "Status",
+    "password": "Password",
+    "created": "Created",
+    "actions": "Actions",
+    "active": "Active",
+    "blocked": "Blocked",
+    "passwordSet": "Set",
+    "passwordNotSet": "Not set",
+    "empty": "No users yet.",
+    "emptyCta": "Invite the first user",
+    "roles": {
+      "user": "User",
+      "supervisor": "Supervisor",
+      "admin": "Administrator"
+    },
+    "changeRole": "Change role",
+    "changeRoleTitle": "Change role for {name}",
+    "changeRoleImpact": "This changes what {name} can see and do immediately.",
+    "block": "Block",
+    "unblock": "Unblock",
+    "delete": "Delete",
+    "deleteTitle": "Delete {name}?",
+    "deleteWarning": "The account loses access immediately and keeps its history. This can be reversed by an administrator.",
+    "deleteConfirmLabel": "Type the email to confirm",
+    "deleted": "User deleted.",
+    "roleUpdated": "Role updated.",
+    "blockedDone": "User blocked.",
+    "unblockedDone": "User unblocked.",
+    "selfGuard": "You cannot change your own role or block yourself.",
+    "lastAdminGuard": "You cannot remove the last active administrator.",
+    "loadError": "Could not load users."
+  },
+  "invites": {
+    "title": "Pending invites",
+    "created": "Invite created.",
+    "createdFor": "Invitation ready for {email}.",
+    "copyLink": "Copy link",
+    "copied": "Link copied.",
+    "revoke": "Revoke",
+    "revoked": "Invite revoked.",
+    "empty": "No pending invites.",
+    "expiresAt": "Expires {date}",
+    "sendHint": "Send this link to the person. It is single-use and expires soon.",
+    "role": "Profile",
+    "loadError": "Could not load invites."
+  },
   "errors": {
     "generic": "Something went wrong.",
     "unauthorized": "You are not authorized to perform this action.",
-    "connectionNotFound": "Connection not found."
+    "connectionNotFound": "Connection not found.",
+    "userExists": "This email already has an account.",
+    "invalidEmail": "Enter a valid email address."
   }
 }

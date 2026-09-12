@@ -38,6 +38,12 @@ export const router = createRouter({
       meta: { requiresAdmin: true },
     },
     {
+      path: "/admin/users",
+      name: "admin-users",
+      component: () => import("../views/UsersView.vue"),
+      meta: { requiresAdmin: true },
+    },
+    {
       path: "/:pathMatch(.*)*",
       redirect: "/",
     },

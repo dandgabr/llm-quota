@@ -65,6 +65,9 @@ describe("OIDC", () => {
         text: async () => "",
       }),
       get: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
+      put: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
+      patch: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
+      delete: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
     };
     const tokens = await exchangeCodeForTokens(config, discovery, "code", "verifier", http);
     expect(tokens.access_token).toBe("at");
@@ -80,6 +83,9 @@ describe("OIDC", () => {
         text: async () => "",
       }),
       get: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
+      put: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
+      patch: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
+      delete: async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" }),
     };
     await expect(exchangeCodeForTokens(config, discovery, "bad", "verifier", http)).rejects.toThrow(
       /Token exchange failed/,

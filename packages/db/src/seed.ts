@@ -35,10 +35,12 @@ export async function seed(): Promise<number> {
   const adminEmail = process.env.SEED_ADMIN_EMAIL;
   if (adminEmail) {
     const role = (process.env.SEED_ADMIN_ROLE ?? "admin") as "user" | "supervisor" | "admin";
+    // The email unique is a partial functional index, which Drizzle's
+    // onConflictDoNothing target cannot reference -> use conflict-free insert.
     await db
       .insert(users)
       .values({ email: adminEmail, role, isActive: true })
-      .onConflictDoNothing({ target: users.email });
+      .onConflictDoNothing();
     console.log(`seeded bootstrap admin ${adminEmail} (role=${role})`);
   }
   await handle.close();

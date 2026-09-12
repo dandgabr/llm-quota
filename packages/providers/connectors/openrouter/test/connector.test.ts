@@ -11,6 +11,15 @@ const stubHttp = (body: unknown): HttpClient => ({
   async post() {
     return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
   },
+  async put() {
+    return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+  },
+  async patch() {
+    return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+  },
+  async delete() {
+    return { status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+  },
 });
 
 describe("openrouter: parseOpenRouterQuota", () => {

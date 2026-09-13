@@ -13,26 +13,31 @@ under [docs/](docs/README.md) (architecture, ADRs, runbook, deploy).
 - **Provider-agnostic quota snapshots** — relative % per time window *and*
   monetary credits (total or used/limit), normalized per connection.
 - **Multi-provider, multi-connection** — tailored `ProviderConnector`s routed by
-  a `ProviderRegistry` (`providerId + connectionType`). v1 connectors:
-  **Ollama Claude** and **OpenRouter** (`@llm-quota/connector-*`).
+  a `ProviderRegistry` (`providerId + connectionType`). Supported connectors:
+  **Google Antigravity** (`antigravity/oauth`), **OpenCode Go** (`opencode-go/api`),
+  **Ollama Claude** (`ollama-claude/api`), and **OpenRouter** (`openrouter/api`).
+- **Immediate sync & event-driven updates** — creating or updating a connection
+  triggers an instant collection pass (`triggerCollectorSync`) with an optimistic
+  response race, so fresh quotas appear immediately without waiting for the scheduler.
 - **Collector** — a scheduler inside the API process polls connections, persists
   raw snapshots (7-day TTL) and spending aggregates (12-month retention); only
   real usage (`used`) is booked, balance-only credits never inflate spend.
 - **History API** — daily/weekly/monthly granularity over the last 12 months,
   via `GET /v1/history` and its canonical `QUERY` (RFC 10008) form.
-- **Multi-user + RBAC** — user / supervisor / admin roles enforced server-side;
+- **Multi-user + RBAC & LGPD compliance** — user / supervisor / admin roles enforced server-side;
   tenant isolation via Postgres `FORCE ROW LEVEL SECURITY` and a non-superuser
-  app role (`llmquota_app`) for the API pool.
+  app role (`llmquota_app`) for the API pool. Full LGPD erasure/anonymize flow (`user.purged`).
+- **Tamper-evident audit trail** — append-only audit log with serialized SHA-256
+  hash chain (`prev_hash`/`event_hash`), monotonic sequencing, automated retention,
+  and admin verification (`GET /v1/audit/verify`).
 - **Secrets at rest encrypted** — envelope encryption (AES-256-GCM, per-value
   DEK wrapped by a KEK from `LLM_QUOTA_KEK`).
-- **Sessions** — opaque 256-bit bearer tokens stored as SHA-256 hashes plus an
-  HMAC-SHA256 signature (verified per request when `SESSION_SECRET` is set).
-  Issuance in production is not wired yet; the session endpoint is dev-only
-  (see [Known limitations](#known-limitations) and
-  [security docs](docs/architecture/security.md)).
+- **Authentication & MFA** — production local authentication with scrypt password hashing,
+  mandatory TOTP MFA for privileged roles, one-time recovery codes, durable lockout
+  backoff, session rotation with grace window, and step-up verification.
 - **SPA** — Vue 3 + Vite + Pinia + vue-router + Chart.js, i18n (en / pt-BR)
   via `@llm-quota/i18n` (i18next, ICU MessageFormat on JSON v4), light/dark
-  theme.
+  theme, responsive quota distribution and model-group cards (e.g. Gemini vs Claude/GPT).
 - **Honest API contract** — RFC 7807 `problem+json` errors, cursor pagination,
   safe DTO projections (connection secrets never leave the server).
 
@@ -76,7 +81,9 @@ packages/
   i18n/        i18next runtime + locales (en, pt-BR)
   providers/   connector framework + registry
     connectors/
+      antigravity/     @llm-quota/connector-antigravity
       ollama-claude/   @llm-quota/connector-ollama-claude
+      opencode-go/     @llm-quota/connector-opencode-go
       openrouter/      @llm-quota/connector-openrouter
 docs/
   adr/         architecture decision records
@@ -206,24 +213,11 @@ See [docs/deploy.md](docs/deploy.md) for the full topology and
 [docs/runbook.md](docs/runbook.md) for backup/restore, rotation and collector
 operations.
 
-### D. First login
+### D. First login & Onboarding
 
-1. Seed created an admin user (`SEED_ADMIN_EMAIL`). Find its id:
-   `SELECT id, email, role FROM users;` (via the ops port in production).
-2. With `ENABLE_DEV_SESSION=1` and `NODE_ENV` outside production, issue a
-   session (hard cap 24 h):
-
-   ```bash
-   curl -X POST http://localhost:3000/auth/issue-session \
-     -H 'Content-Type: application/json' \
-     -d '{"userId":"<user-uuid>","role":"admin","expiresInSec":3600}'
-   ```
-
-3. Paste the returned `token` into the SPA login view; the API is then called
-   with `Authorization: Bearer <token>`.
-
-In production this endpoint is disabled (fail-closed). See
-[Known limitations](#known-limitations).
+1. **Setup wizard**: When the database is newly initialized without administrators, navigating to `http://localhost:3000` (or `http://localhost:5173`) redirects to `/setup`.
+2. **First Administrator Bootstrap**: The server generates an ephemeral setup token at first boot (printed to the server log). Entering the token in the `/setup` wizard allows provisioning the primary administrator account, password, and enrolling mandatory TOTP MFA.
+3. **Invites & Local Login**: Administrators can invite other users (`/admin`), and users authenticate directly via `POST /auth/login` (with TOTP challenge if enrolled).
 
 ## Verification checklist
 
@@ -237,12 +231,9 @@ pnpm build       # turbo build, all packages
 Integration + E2E follow section B. All four commands above are expected green
 on a clean checkout.
 
-## Known limitations
+## Known limitations & Backlog
 
-- **No production login path yet** — OIDC id_token validation, server-side
-  state/verifier persistence and MFA verify endpoints are documented but not
-  implemented; `POST /auth/issue-session` and the OIDC/MFA challenge endpoints
-  are dev-only and fail closed outside development.
+- **SSO / External OIDC** — OIDC authorization primitives exist in `packages/auth`, but enterprise identity provider login federation (e.g. Okta, Azure AD, Google Workspace SSO) and SCIM provisioning are scheduled for future phases; local password + TOTP MFA is the active production auth path.
 - **Bearer token in `localStorage`** — documented XSS trade-off, mitigated by a
   `default-src 'self'` CSP at the edge. There are no HttpOnly cookies today.
 - **FX HTTP fetcher unwired** — the currency engine accepts an injected rate

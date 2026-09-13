@@ -39,7 +39,9 @@ packages/
   core/        pure domain: quota windows, %, monetary credits, FX abstraction, crypto
   providers/   connector contract + ProviderRegistry (framework)
     connectors/
+      antigravity/     @llm-quota/connector-antigravity
       ollama-claude/   @llm-quota/connector-ollama-claude
+      opencode-go/     @llm-quota/connector-opencode-go
       openrouter/      @llm-quota/connector-openrouter
   auth/        OIDC/TOTP/WebAuthn primitives, session tokens, RBAC helpers
   i18n/        i18next runtime + locale files (en, pt-BR)
@@ -51,13 +53,14 @@ packages/
 
 The collector is **not** a separate service: a scheduler inside the `api`
 process (first pass ~5 s after boot, then every `COLLECT_INTERVAL_MS`,
-default 60 s; `0` disables) drives the whole pipeline:
+default 60 s; `0` disables) coupled with an event-driven trigger
+(`triggerCollectorSync` on connection create/edit) drives the whole pipeline:
 
 ```
-[providers (Ollama Claude, OpenRouter)]
-      │ connector read (injectable HttpClient)
+[providers (Antigravity, OpenCode Go, Ollama Claude, OpenRouter)]
+      │ connector read (injectable HttpClient; OAuth PKCE or API Key)
       ▼
-[collector scheduler, inside api]
+[collector scheduler & triggerCollectorSync, inside api]
       │ enumerate connections cross-tenant via app.is_collector RLS policy
       │ write per-owner under withRlsContext
       ▼
@@ -71,7 +74,7 @@ default 60 s; `0` disables) drives the whole pipeline:
                   GET | QUERY /v1/history (daily|weekly|monthly, 12-month window)]
       │
       ▼
-[Vue 3 SPA: dashboard (Chart.js), connections, history, admin]
+[Vue 3 SPA: dashboard (Chart.js + model groups), connections, history, admin]
 ```
 
 Retention bounds storage: raw snapshots expire after **7 days**; only the

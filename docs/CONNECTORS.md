@@ -16,7 +16,7 @@ graph TD
     W --> W_Windows["supportedWindows: ['session', 'weekly', 'monthly']"]
     W --> W_Ex["Ex: Antigravity, OpenCode Go, Ollama Claude"]
     
-    C --> C_Windows["supportedWindows: ['daily']"]
+    C --> C_Windows["supportedWindows: ['lifetime']"]
     C --> C_Ex["Ex: OpenRouter, OpenAI API, Anthropic API, Gemini API"]
 ```
 
@@ -115,7 +115,7 @@ Crie o conector em `packages/providers/connectors/<nome-do-provedor>/`:
 ### Passo 2: Implementar o Conector e Classificar a Cota
 No arquivo `src/index.ts` do conector:
 - Defina `quotaType`:
-  - Se for cota por crédito/consumo em dólares (ex: OpenAI API, Anthropic API): `quotaType: "credits"`, `supportedWindows: ["daily"]`.
+  - Se for cota por crédito/consumo em dólares (ex: OpenRouter, OpenAI API, Anthropic API): `quotaType: "credits"`, `supportedWindows: ["lifetime"]`.
   - Se for assinatura/janela de modelo (ex: Antigravity, OpenCode Go): `quotaType: "sliding_window"`, `supportedWindows: ["session", "weekly"]`.
 - Se o provedor possuir janela mensal (como OpenCode Go): inclua `"monthly"` em `supportedWindows`.
 - No parser `parseQuota(body, window)`:

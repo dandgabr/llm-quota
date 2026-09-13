@@ -28,23 +28,18 @@ them.
 
 ## Dev-only authentication endpoints (fail-closed)
 
-- `POST /auth/issue-session`, `GET /auth/oidc/authorize`,
-  `GET /auth/mfa/totp/challenge`, `GET /auth/mfa/webauthn/challenge` are
-  **development/testing scaffolding**.
-- Gate is fail-closed: they respond `403 problem+json` unless **both**
-  `ENABLE_DEV_SESSION=1` **and** `NODE_ENV` ≠ production. The production
-  compose leaves `ENABLE_DEV_SESSION` empty, so the shipped topology cannot
-  serve them even if misconfigured.
-- `issue-session` caps lifetime at 24 h and requires a valid `SESSION_SECRET`
-  (≥ 32 chars) — no hardcoded fallback.
+## Production local authentication & MFA (implemented)
 
-**Known limitation (unimplemented):** there is **no production authentication
-path yet**. OIDC **id_token validation**, server-side **state/PKCE-verifier
-persistence**, and the **MFA verify/enrollment endpoints** are specified in
-[ADR-009](adr/ADR-009-security-layer-envelope-auth.md) but not implemented;
-`OIDC_*` env vars are reserved placeholders. The primitives (PKCE pair
-generation, OIDC client, TOTP, WebAuthn assertion verification) exist in
-`packages/auth` and are unit-tested; only the endpoint wiring is missing.
+- Full local authentication lands via [ADR-016](adr/ADR-016-local-authentication-password-totp-recovery.md):
+  `POST /auth/login` (scrypt password hash, memory-bounded semaphore, uniform dummy verify for unknown emails),
+  returning either a session token or a short-lived single-use MFA challenge.
+- **TOTP MFA**: Mandatory for `admin` and `supervisor` roles, optional for `user`. Secrets are envelope-encrypted at rest (AES-256-GCM via `LLM_QUOTA_KEK`). CAS anti-replay on `last_used_step`.
+- **Recovery codes**: 10 single-use recovery codes, 160-bit entropy, hashed with HMAC-SHA256 (`RECOVERY_PEPPER`, fail-closed). Supports versioned rotation (`RECOVERY_PEPPER_PREVIOUS`).
+- **Durable login lockout**: Exponential backoff keyed by `HMAC(AUTH_PEPPER, lower(email)) + IP`, backed by `auth_login_attempts`. Anti-distributed attack soft delay via `LOCKOUT_ACCOUNT_THRESHOLD` and `LOCKOUT_ACCOUNT_DELAY_MS`.
+- **Session rotation**: Active session rotation with grace window (`SESSION_ROTATE_SECONDS`, `SESSION_ROTATE_GRACE_SECONDS`) so in-flight requests complete cleanly.
+- **Step-up verification**: Sensitive operations (MFA disable/enroll, LGPD purge) require a fresh password reauth or recent window (`STEP_UP_TTL_SECONDS`).
+
+**Backlog items (deferred):** Enterprise external SSO (OIDC full `id_token` verification + SCIM provisioning) and WebAuthn/Passkey registration are future roadmap items. Dev scaffolding endpoints (`ENABLE_DEV_SESSION`) remain disabled in production.
 
 ## Transport security
 

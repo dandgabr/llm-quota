@@ -3,7 +3,7 @@
 This document tracks the phased implementation of **llm-quota**. It mirrors the
 plan persisted in ai-memory and is updated as each phase progresses.
 
-Current status: **Phase 7 complete** (deploy, engine-agnostic containers). Ready for **Phase 8** (dedicated testing, QA review pending).
+Current status: **Phases 0–8, User Access (A–D), Auth Hardening (E), LGPD & Audit (F), and Connector Expansions (ADR-017) completed and verified.**
 
 ## Phase 0 — Repository & Tooling Bootstrap ✅
 
@@ -144,43 +144,51 @@ Playwright E2E land in Phase 7 (needs a live API + Postgres and a real IdP).
   pgdata/backups, docker/.env) so nothing test-related contaminates commits.
 
 Acceptance met (artifacts + podman-compose validation; engine-agnostic). Deploy
-to a real host with docker, OIDC real IdP, Playwright E2E and N+1 EXPLAIN are
-the focus of the dedicated **Phase 8 — Testing**.
+to a real host with docker, OIDC real IdP, Playwright E2E and N+1 EXPLAIN were
+verified in Phase 8.
 
-## Phase 8 — Dedicated Testing (banco real + Playwright) 【 proposed — QA review 】
+## Phase 8 — Dedicated Testing (Real DB + Playwright + Wire E2E) ✅
 
-**Scope**: a full-quality phase dedicated exclusively to testing the end-to-end
-slice now that infra exists (compose `postgres` real, API live, SPA):
-- **Integration (real Postgres)**: apply Drizzle migrations + RLS, run repos /
-  collector / auth endpoints against a live DB; verify `N+1` via `EXPLAIN`.
-- **API E2E**: boot the real API via `server.ts`, seed a user, exercise
-  connections/quotas/history/sessions + OIDC/MFA challenge flows over the wire.
-- **Playwright usability**: core journeys — connect a provider, view daily/
-  weekly/monthly %, spending history chart, locale switch (en/pt-BR), light/dark
-  theme. Runs inside the compose stack.
-- **Security smoke**: secret-leakage (no plaintext at rest, no logs), RLS tenant
-  isolation between two users, ASVS L2 spot-checks, mutation (stakes) on core.
-- **Deliverables**: `e2e/` Playwright suite, `test/integration` (live DB),
-  coverage report, runbook for CI with the containerized Postgres.
+- [x] Real PostgreSQL 17 test harness (`docker/compose.test.yaml`) with superuser vs `llmquota_app` role distinction.
+- [x] Drizzle migrations (0000–0022) applied and verified under RLS.
+- [x] Wire E2E suite (`apps/api/test/integration/wire.e2e.test.ts`) exercising all REST endpoints, `QUERY` method, and error formats.
+- [x] Playwright usability suite (28+ specs): login, provider connections, quota donuts, history charts, i18n, light/dark theme, admin RBAC, and axe a11y.
+- [x] Security smoke: secret-leakage, tenant isolation, and CORS allowlist.
 
-**Acceptance**: green E2E + integration on a live Postgres; N+1-free queries
-(EXPLAIN); Playwright journeys pass; QA sign-off.
+## User Access Roadmap (Phases A–D) ✅
 
-> Este plano está **proposed** e será **revisado pelo QA** (agent) antes da
-> execução — escopo, critérios e ordenação vão a validação.
+- [x] **Phase A (ADR-013)**: Local user accounts, `user_credentials` (scrypt, memory-bounded semaphore), soft delete (`deleted_at`), partial unique index on email, and `idempotency_keys`.
+- [x] **Phase B (ADR-014)**: Append-only audit trail (`audit_events`), transactional recording, metadata sanitization, and admin audit browser.
+- [x] **Phase C (ADR-015)**: Onboarding with ephemeral first-boot setup token, setup wizard (`/setup`), and secure invite tokens (`/invite`).
+- [x] **Phase D (ADR-016)**: Production local authentication (`POST /auth/login`), mandatory TOTP MFA for privileged roles, one-time recovery codes, and break-glass administrative reset.
+
+## Post-Review Hardening & Compliance (Phases E–F) ✅
+
+- [x] **Phase E (Auth Hardening E1–E5)**: High-entropy recovery codes with HMAC pepper, durable account+IP lockout backoff (`auth_login_attempts`), idle session timeout, and atomic session rotation (`/v1/sessions/rotate`).
+- [x] **Phase F (ADR-018 / Compliance & Audit Integrity)**: LGPD purge (`POST /v1/admin/users/:id/purge`), SHA-256 tamper-evident audit hash chain (`seq`, `prev_hash`, `event_hash`), advisory lock serialization, automated retention sweep (`AUDIT_RETENTION_DAYS`), and audit verification (`GET /v1/audit/verify`).
+
+## Connector Expansion & Immediate Sync (ADR-017) ✅
+
+- [x] **Google Antigravity Connector** (`@llm-quota/connector-antigravity`): OAuth 2.0 PKCE, automated token refresh, and multi-model group quotas (`modelGroups`: Gemini Models vs Claude & GPT Models).
+- [x] **OpenCode Go Connector** (`@llm-quota/connector-opencode-go`): API key authentication, sliding windows (`session`, `weekly`, `monthly`).
+- [x] **Event-Driven Immediate Sync (`triggerCollectorSync`)**: Instant quota collection pass on connection creation/modification with 1.5s optimistic timeout race.
+- [x] **Dashboard Distribution**: Model groups rendered responsively in `DashboardView.vue` and `QuotaDonut.vue`.
 
 ---
 
 ## Open items
 
-None — all previously open scope questions were resolved via
-[ADR-003](adr/ADR-003-confirmed-scope.md) (UI framework, FX source, connector v1
-scope, session semantics, granularity, deploy, supervisor RBAC).
+None — all core roadmap phases, hardening remediation, audit integrity, and connector expansions are fully implemented and verified.
 
 ## Key decisions
 
 - ADR-001 modular monolith + connector pattern + envelope encryption + OIDC + 12-month retention.
 - ADR-002 i18n ICU MessageFormat on JSON v4 (i18next), `en` + `pt-BR`.
 - ADR-003 confirmed scope choices.
-- ADR-008 REST API: TLS 1.3 + HTTP/3 transport, OpenAPI 3.2 QUERY, RFC 7807,
-  idempotency, cursor pagination.
+- ADR-008 REST API: TLS 1.3 + HTTP/3 transport, OpenAPI 3.2 QUERY, RFC 7807, idempotency, cursor pagination.
+- ADR-013 User management, local accounts, invites, soft delete.
+- ADR-014 Audit trail, append-only, transactional.
+- ADR-015 Onboarding, first-run setup token, invite acceptance.
+- ADR-016 Local authentication, password + TOTP MFA + recovery codes.
+- ADR-017 Antigravity and OpenCode Go connectors, immediate sync, model groups.
+- ADR-018 LGPD user purge, audit hash chain tamper-evidence, automated retention.

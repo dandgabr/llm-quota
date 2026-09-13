@@ -37,9 +37,9 @@ What the bootstrap does:
   creates the non-superuser role `llmquota_app` **without a password**
   (provisioning sets it); migration `0002` adds `user_sessions.signature` and
   the collector RLS policies (`app.is_collector`).
-- `seed` registers the v1 quota providers (`ollama-claude/api`,
-  `openrouter/api`) and, when `SEED_ADMIN_EMAIL` is set, creates the bootstrap
-  admin user (role from `SEED_ADMIN_ROLE`, default `admin`). Both steps are
+- `seed` registers the quota providers (`antigravity/oauth`, `opencode-go/api`,
+  `ollama-claude/api`, `openrouter/api`) and, when `SEED_ADMIN_EMAIL` is set,
+  creates the bootstrap admin user (role from `SEED_ADMIN_ROLE`, default `admin`). Both steps are
   idempotent.
 
 The first boot of the `postgres` container runs `docker/pg/init-prod.sh`
@@ -51,10 +51,15 @@ Prefer `db:migrate` for every schema change. `db:push` exists but diffs the
 schema live and can drift from the migration history — treat it as a
 drift-dangerous last resort for throwaway databases.
 
-## 2. Session issuance (development only)
+## 2. Onboarding & First-run Setup Wizard
 
-Production has no session-issuance path yet (see §8). During development or
-against a non-production environment:
+When starting a fresh instance without a seeded admin:
+1. Navigating to the web app (`/`) or directly to `/setup` opens the Setup Wizard.
+2. The server mints an ephemeral 256-bit bootstrap token on first boot and prints it to stdout.
+3. The operator pastes the setup token, sets the administrator email and password, and completes mandatory TOTP MFA enrollment.
+4. Once completed, standard login (`POST /auth/login`) is active and `/setup` locks permanently (`409 Conflict`).
+
+During testing/dev, `POST /auth/issue-session` remains available under `ENABLE_DEV_SESSION=1` and `NODE_ENV!=production`.
 
 ```bash
 # Requires ENABLE_DEV_SESSION=1 and NODE_ENV != production (fail-closed otherwise).
@@ -174,13 +179,9 @@ Behavior worth knowing before tuning:
 Lowering the interval increases provider API traffic and DB writes roughly
 linearly; there is no per-connection backoff configuration yet.
 
-## 8. Known limitations (operational)
+## 8. Known limitations & Backlog (operational)
 
-- **No production authentication path** — OIDC id_token validation, server-side
-  state/verifier persistence and MFA verify endpoints are specified but not
-  implemented. All `/auth/*` session endpoints are dev-only and fail closed
-  (require `ENABLE_DEV_SESSION=1` **and** `NODE_ENV` ≠ production; the prod
-  compose leaves the flag empty).
+- **External Enterprise SSO** — Local authentication (passwords, TOTP MFA, recovery codes) is active and enforced. External OIDC SSO federation and SCIM are reserved for future phases. Dev-only session endpoints fail closed outside development.
 - **Bearer token in `localStorage`** — XSS trade-off, mitigated by the edge
   CSP (`default-src 'self'`). No HttpOnly cookies exist today; browser
   sessions end when the token expires or is revoked via `DELETE /v1/sessions/:id`.

@@ -66,7 +66,7 @@ podman-compose -f docker/compose.yaml up -d
 Na primeira execução, inicialize as tabelas do banco:
 ```bash
 # Via container da API:
-docker compose -f docker/compose.yaml exec api pnpm --filter @llm-quota/db migrate
+docker compose -f docker/compose.yaml exec api pnpm --filter @llm-quota/db db:migrate
 docker compose -f docker/compose.yaml exec api pnpm --filter @llm-quota/db seed
 ```
 

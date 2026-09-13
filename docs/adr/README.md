@@ -27,6 +27,8 @@ and set the old one's status to `superseded by [[decisions/<new>]]`.
 | [ADR-014](ADR-014-audit-trail-append-only-transactional.md)    | Audit trail: append-only, transactional, sanitized metadata, keyset cursor                           | accepted |
 | [ADR-015](ADR-015-onboarding-first-run-and-invites.md)         | Onboarding: first-run admin bootstrap + invite acceptance via SECURITY DEFINER functions              | accepted |
 | [ADR-016](ADR-016-local-authentication-password-totp-recovery.md) | Local authentication: password + TOTP MFA + recovery codes + break-glass reset                    | accepted |
+| [ADR-017](ADR-017-antigravity-opencode-go-connectors-immediate-sync.md) | Antigravity and OpenCode Go connectors with immediate sync and model groups                      | accepted |
+| [ADR-018](ADR-018-lgpd-purge-audit-integrity-hash-chain.md) | LGPD user purge and audit trail tamper-evidence (hash chain, verify, retention)                     | accepted |
 
 ## Status legend
 

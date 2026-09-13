@@ -2,6 +2,7 @@
   "name": "@llm-quota/shared",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Shared TypeScript types, DTOs and env helpers for llm-quota.",
   "type": "module",
   "main": "./dist/index.js",

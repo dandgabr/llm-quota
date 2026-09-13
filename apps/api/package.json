@@ -2,6 +2,7 @@
   "name": "@llm-quota/api",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "llm-quota backend server: REST API, quota collectors, auth and RBAC.",
   "type": "module",
   "main": "./dist/index.js",

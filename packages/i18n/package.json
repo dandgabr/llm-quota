@@ -2,6 +2,7 @@
   "name": "@llm-quota/i18n",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "llm-quota internationalization: i18next runtime and locale resources (en, pt-BR).",
   "type": "module",
   "main": "./dist/index.js",

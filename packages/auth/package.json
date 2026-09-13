@@ -2,6 +2,7 @@
   "name": "@llm-quota/auth",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "llm-quota auth: OIDC abstraction, TOTP, WebAuthn and RBAC helpers.",
   "type": "module",
   "main": "./dist/index.js",

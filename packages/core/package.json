@@ -2,6 +2,7 @@
   "name": "@llm-quota/core",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Pure domain for llm-quota: quota windows, percentages, credits, FX and 12-month history retention.",
   "type": "module",
   "main": "./dist/index.js",

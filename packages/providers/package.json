@@ -2,6 +2,7 @@
   "name": "@llm-quota/providers",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "llm-quota provider connector framework: contract interface and ProviderRegistry (integrator).",
   "type": "module",
   "main": "./dist/index.js",

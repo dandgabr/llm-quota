@@ -2,6 +2,7 @@
   "name": "@llm-quota/connector-openrouter",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "OpenRouter (API) provider connector for llm-quota (v1 connector, Phase 3).",
   "type": "module",
   "main": "./dist/index.js",

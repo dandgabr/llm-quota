@@ -2,6 +2,7 @@
   "name": "@llm-quota/connector-antigravity",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Google Antigravity / Gemini Code Assist (OAuth) provider connector for llm-quota.",
   "type": "module",
   "main": "./dist/index.js",

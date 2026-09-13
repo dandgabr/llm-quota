@@ -2,6 +2,7 @@
   "name": "@llm-quota/connector-opencode-go",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "OpenCode Go (API) provider connector for llm-quota.",
   "type": "module",
   "main": "./dist/index.js",

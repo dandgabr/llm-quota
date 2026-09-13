@@ -2,6 +2,7 @@
   "name": "@llm-quota/web",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "llm-quota SaaS web frontend (Vue 3 + Vite + Pinia), a client of the backend API.",
   "type": "module",
   "scripts": {

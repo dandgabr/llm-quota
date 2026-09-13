@@ -41,6 +41,8 @@ import { parseKekFromEnv, windowKey, type Dek, type Granularity } from "@llm-quo
 import { ProviderRegistry } from "@llm-quota/providers";
 import { ollamaClaudeConnector } from "@llm-quota/connector-ollama-claude";
 import { openRouterConnector } from "@llm-quota/connector-openrouter";
+import { opencodeGoConnector } from "@llm-quota/connector-opencode-go";
+import { antigravityConnector } from "@llm-quota/connector-antigravity";
 import {
   hasRole,
   generatePkcePair,
@@ -237,6 +239,8 @@ export function createApiApp({
     const r = new ProviderRegistry();
     r.register(ollamaClaudeConnector);
     r.register(openRouterConnector);
+    r.register(opencodeGoConnector);
+    r.register(antigravityConnector);
     return r;
   })();
   const connStore = new PostgresConnectionStore(db.db, kek ?? parseKekFromEnv());
@@ -1731,6 +1735,17 @@ export function createApiApp({
         );
         return created;
       });
+
+      // Immediate sync for new connection: bounded wait so response is fast,
+      // but quotas are ready immediately for the client if upstream responds promptly.
+      const serverModule = await import("./server.js").catch(() => null);
+      if (serverModule?.triggerCollectorSync) {
+        await Promise.race([
+          serverModule.triggerCollectorSync(view.id),
+          new Promise((r) => setTimeout(r, 1500)),
+        ]).catch(() => null);
+      }
+
       return c.json(view, 201);
     } catch {
       // Unknown providerId trips the FK constraint -> client error, not 500.
@@ -1782,10 +1797,171 @@ export function createApiApp({
       if (!updated) {
         return problemJson(c, problem(404, "Not Found", "Connection not found", "not_found"));
       }
+
+      if (body.secret) {
+        const serverModule = await import("./server.js").catch(() => null);
+        if (serverModule?.triggerCollectorSync) {
+          await Promise.race([
+            serverModule.triggerCollectorSync(connId),
+            new Promise((r) => setTimeout(r, 1500)),
+          ]).catch(() => null);
+        }
+      }
+
       return c.json(updated);
     } catch {
       return problemJson(c, problem(400, "Bad Request", "Failed to update connection", "invalid_params"));
     }
+  });
+
+  // Antigravity Google OAuth helper routes (ADR-009 / OAuth PKCE)
+  app.get("/v1/connections/oauth/antigravity/authorize", async (c) => {
+    const clientId =
+      (c.req.query("client_id") || "").trim() ||
+      process.env.ANTIGRAVITY_CLIENT_ID ||
+      process.env.GOOGLE_CLIENT_ID ||
+      "";
+
+    if (!clientId) {
+      return problemJson(c, problem(400, "Bad Request", "ANTIGRAVITY_CLIENT_ID or Google Client ID must be configured in environment or provided in request", "invalid_params"));
+    }
+
+    const { challenge, verifier } = generatePkcePair();
+    const state = generateOidcState();
+    const redirectUri = process.env.ANTIGRAVITY_REDIRECT_URI || `${webBase || "http://localhost:5173"}/connections`;
+
+    const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    authUrl.searchParams.set("client_id", clientId);
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("scope", "https://www.googleapis.com/auth/cloud-platform openid email");
+    authUrl.searchParams.set("access_type", "offline");
+    authUrl.searchParams.set("prompt", "consent");
+    authUrl.searchParams.set("code_challenge", challenge);
+    authUrl.searchParams.set("code_challenge_method", "S256");
+    authUrl.searchParams.set("state", state);
+
+    return c.json({
+      url: authUrl.toString(),
+      state,
+      code_verifier: verifier,
+    });
+  });
+
+  app.post("/v1/connections/oauth/antigravity/callback", async (c) => {
+    const p = c.get("principal");
+    const body = await c.req.json<{
+      code?: string;
+      code_verifier?: string;
+      label?: string;
+      client_id?: string;
+      client_secret?: string;
+    }>().catch(() => null);
+
+    if (!body?.code || !body?.code_verifier) {
+      return problemJson(c, problem(400, "Bad Request", "code and code_verifier are required", "invalid_params"));
+    }
+
+    const clientId =
+      (body.client_id || "").trim() ||
+      process.env.ANTIGRAVITY_CLIENT_ID ||
+      process.env.GOOGLE_CLIENT_ID ||
+      "";
+    const clientSecret =
+      (body.client_secret || "").trim() ||
+      process.env.ANTIGRAVITY_CLIENT_SECRET ||
+      process.env.GOOGLE_CLIENT_SECRET ||
+      "";
+    const redirectUri = process.env.ANTIGRAVITY_REDIRECT_URI || `${webBase || "http://localhost:5173"}/connections`;
+
+    const tokenParams: Record<string, string> = {
+      client_id: clientId,
+      grant_type: "authorization_code",
+      code: body.code,
+      code_verifier: body.code_verifier,
+      redirect_uri: redirectUri,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
+    };
+
+    const tokenBody = Object.entries(tokenParams)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join("&");
+
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: tokenBody,
+    });
+
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text();
+      return problemJson(c, problem(400, "Bad Request", `Token exchange failed: ${errText}`, "invalid_params"));
+    }
+
+    const tokenData = (await tokenRes.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+    };
+
+    if (!tokenData.refresh_token && !tokenData.access_token) {
+      return problemJson(c, problem(400, "Bad Request", "No access or refresh token returned from Google OAuth", "invalid_params"));
+    }
+
+    const resolved = await connStore.resolveProvider("antigravity/oauth");
+    if (!resolved) {
+      return problemJson(c, problem(400, "Bad Request", "Antigravity provider not found in database", "invalid_params"));
+    }
+
+    const expiresAt = tokenData.expires_in
+      ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+      : undefined;
+
+    const secretPayload = JSON.stringify({
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      expires_at: expiresAt,
+      client_id: clientId,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
+    });
+
+    const view = await withRlsContext(db.db, p, async (tx) => {
+      const created = await connStore.createAndReturnView({
+        userId: p.userId,
+        providerId: resolved.id,
+        label: body.label || "Antigravity",
+        connectionType: "oauth",
+        secret: secretPayload,
+        db: tx,
+      });
+
+      await auditStore.record(
+        {
+          action: "connection.created",
+          actorUserId: p.userId,
+          actorRole: p.role,
+          targetType: "connection",
+          targetId: created.id,
+          metadata: { providerKey: created.providerKey, authType: "oauth" },
+          requestId: c.get("requestId"),
+        },
+        { db: tx },
+      );
+
+      return created;
+    });
+
+    // Immediate sync for new OAuth connection: bounded wait so response is fast,
+    // but quotas are ready immediately for the client if upstream responds promptly.
+    const serverModule = await import("./server.js").catch(() => null);
+    if (serverModule?.triggerCollectorSync) {
+      await Promise.race([
+        serverModule.triggerCollectorSync(view.id),
+        new Promise((r) => setTimeout(r, 1500)),
+      ]).catch(() => null);
+    }
+
+    return c.json(view, 201);
   });
 
   // FX Rate lookup (e.g. GET /v1/fx/rate?from=USD&to=BRL)

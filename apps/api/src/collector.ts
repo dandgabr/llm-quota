@@ -121,7 +121,9 @@ export async function runCollectPass(
         const credits =
           snapshot.kind === "credits"
             ? { used: snapshot.used, limit: snapshot.limit, total: snapshot.total }
-            : undefined;
+            : snapshot.modelGroups
+              ? { modelGroups: snapshot.modelGroups }
+              : undefined;
         const resetIso = snapshot.resetsAt;
         await snapshots.insertSnapshot({
           connectionId: item.conn.id,

@@ -43,6 +43,9 @@ import {
 import { ProviderRegistry } from "@llm-quota/providers";
 import { ollamaClaudeConnector } from "@llm-quota/connector-ollama-claude";
 import { openRouterConnector } from "@llm-quota/connector-openrouter";
+import { opencodeGoConnector } from "@llm-quota/connector-opencode-go";
+import { antigravityConnector } from "@llm-quota/connector-antigravity";
+import type { QuotaWindow } from "@llm-quota/shared";
 import { hashToken } from "@llm-quota/auth";
 import { randomBytes } from "node:crypto";
 import { createApiApp } from "./app.js";
@@ -368,6 +371,8 @@ export function createDefaultRegistry(): ProviderRegistry {
   const registry = new ProviderRegistry();
   registry.register(ollamaClaudeConnector);
   registry.register(openRouterConnector);
+  registry.register(opencodeGoConnector);
+  registry.register(antigravityConnector);
   return registry;
 }
 
@@ -377,12 +382,12 @@ export function createDefaultRegistry(): ProviderRegistry {
  * per owner context so FORCE RLS scopes the snapshot/aggregate writes. Also
  * applies the 12-month aggregate retention and the 7-day snapshot TTL.
  */
-let activeCollectorTrigger: (() => Promise<{ collected: number; skipped: number; failed: number }>) | null = null;
+let activeCollectorTrigger: ((targetConnectionId?: string) => Promise<{ collected: number; skipped: number; failed: number }>) | null = null;
 
-/** Trigger a collection pass immediately if a collector is running. */
-export async function triggerCollectorSync(): Promise<{ collected: number; skipped: number; failed: number } | null> {
+/** Trigger a collection pass immediately if a collector is running, optionally scoped to a single connection. */
+export async function triggerCollectorSync(targetConnectionId?: string): Promise<{ collected: number; skipped: number; failed: number } | null> {
   if (!activeCollectorTrigger) return null;
-  return activeCollectorTrigger();
+  return activeCollectorTrigger(targetConnectionId);
 }
 
 export function startCollector(
@@ -403,19 +408,23 @@ export function startCollector(
   };
 
   let running = false;
-  const pass = async (): Promise<{ collected: number; skipped: number; failed: number }> => {
-    if (running) return { collected: 0, skipped: 0, failed: 0 };
-    running = true;
+  const pass = async (targetConnectionId?: string): Promise<{ collected: number; skipped: number; failed: number }> => {
+    if (!targetConnectionId && running) return { collected: 0, skipped: 0, failed: 0 };
+    if (!targetConnectionId) running = true;
     let totalCollected = 0;
     let totalSkipped = 0;
     let totalFailed = 0;
     try {
-      const rows = await withRlsContext(
+      const allRows = await withRlsContext(
         db.db,
         COLLECTOR,
         (tx) => connStore.listAllForCollector({ db: tx }),
         { "app.is_collector": "true" },
       );
+      const rows = targetConnectionId
+        ? allRows.filter((r) => r.id === targetConnectionId)
+        : allRows;
+
       for (const row of rows) {
         const owner: ResolvedPrincipal = {
           userId: row.userId,
@@ -429,9 +438,18 @@ export function startCollector(
             if (!conn) return;
             const connectorId = await connStore.providerConnectorId(row.providerId, { db: tx });
             if (!connectorId) return;
-            // Ollama Cloud exposes session and weekly usage windows; other providers poll daily/monthly.
-            const windowsToPoll: ("session" | "weekly" | "daily")[] =
-              connectorId.startsWith("ollama") ? ["session", "weekly"] : ["daily"];
+
+            const connector = registry.get(connectorId);
+            // Window resolution:
+            // 1. Explicitly configured supportedWindows on connector
+            // 2. Or if connector.quotaType === "credits", single snapshot ("lifetime")
+            // 3. Otherwise standard sliding-window LLM default: ["session", "weekly"]
+            const windowsToPoll: readonly QuotaWindow[] =
+              connector?.supportedWindows && connector.supportedWindows.length > 0
+                ? connector.supportedWindows
+                : connector?.quotaType === "credits"
+                  ? ["lifetime"]
+                  : ["session", "weekly"];
 
             const quotaStore = new PostgresQuotaStore(tx);
             const collectItems = await Promise.all(
@@ -443,7 +461,9 @@ export function startCollector(
                   providerId: row.providerId,
                   connectorId,
                   window: win,
-                  lastCollectedAt: latestForWin?.readAt,
+                  // When targetConnectionId is explicitly triggered (new/edited connection),
+                  // set lastCollectedAt to undefined so runCollectPass immediately queries upstream!
+                  lastCollectedAt: targetConnectionId ? undefined : latestForWin?.readAt,
                   secret: conn.secret,
                 };
               }),
@@ -475,84 +495,88 @@ export function startCollector(
           log(`[collector] connection=${row.id} error: ${String(err)}`);
         }
       }
-      // Retention: aggregates 12 months, raw snapshots 7 days (ADR-005).
-      const now = new Date();
-      await withRlsContext(
-        db.db,
-        COLLECTOR,
-        async (tx) => {
-          const history = new PostgresHistoryStore(tx);
-          const aggEvicted = await history.evictOlderThan(retentionBoundary(now));
-          const snapEvicted = await history.evictSnapshotsOlderThan(
-            snapshotRetentionBoundary(now),
-          );
-          if (aggEvicted || snapEvicted) {
-            log(`[collector] retention: evicted ${aggEvicted} aggregates, ${snapEvicted} snapshots`);
-          }
-        },
-        { "app.is_collector": "true" },
-      );
-      // Idempotency ledger: drop expired keys (bounded by TTL 24h). Runs under
-      // the collector GUC so the maintenance delete policy applies on the pool.
-      try {
-        const swept = await withRlsContext(
+
+      // Housekeeping sweeps (retention, idempotency, auth) only run during scheduled full passes
+      if (!targetConnectionId) {
+        // Retention: aggregates 12 months, raw snapshots 7 days (ADR-005).
+        const now = new Date();
+        await withRlsContext(
           db.db,
           COLLECTOR,
-          (tx) => new PostgresIdempotencyStore(tx).sweep(now),
+          async (tx) => {
+            const history = new PostgresHistoryStore(tx);
+            const aggEvicted = await history.evictOlderThan(retentionBoundary(now));
+            const snapEvicted = await history.evictSnapshotsOlderThan(
+              snapshotRetentionBoundary(now),
+            );
+            if (aggEvicted || snapEvicted) {
+              log(`[collector] retention: evicted ${aggEvicted} aggregates, ${snapEvicted} snapshots`);
+            }
+          },
           { "app.is_collector": "true" },
         );
-        if (swept) log(`[collector] idempotency: swept ${swept} expired keys`);
-      } catch (err) {
-        log(`[collector] idempotency sweep error: ${String(err)}`);
-      }
-      // Auth state sweeps: stale login throttle rows, expired challenges and
-      // rotated/expired sessions (E4/E5 retention).
-      try {
-        const authStore = new PostgresAuthStore(db.db, kek);
-        const auditStore = new PostgresAuditStore(db.db);
-        const ttl = envInt("LOGIN_ATTEMPT_TTL_SECONDS", 86_400, 1);
-        const sessionTtl = envInt("SESSION_RETENTION_SECONDS", 7 * 24 * 3600, 60);
-        const attempts = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepLoginAttempts(ttl, now, { db: tx }), {
-          "app.is_auth_throttle": "true",
-        });
-        const challenges = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepChallenges(now, { db: tx }), {
-          "app.is_collector": "true",
-        });
-        const sessions = await withRlsContext(
-          db.db,
-          COLLECTOR,
-          (tx) => sweepSessions(tx, now, sessionTtl),
-          { "app.is_collector": "true" },
-        );
-        // Audit retention (F2): only the SECURITY DEFINER function can delete
-        // audit rows (append-only for the app role).
-        const auditDays = envInt("AUDIT_RETENTION_DAYS", 365, 0);
-        let auditSwept = 0;
-        if (auditDays > 0) {
-          auditSwept = await withRlsContext(
+        // Idempotency ledger: drop expired keys (bounded by TTL 24h). Runs under
+        // the collector GUC so the maintenance delete policy applies on the pool.
+        try {
+          const swept = await withRlsContext(
             db.db,
             COLLECTOR,
-            (tx) => auditStore.sweepViaFunction(auditDays, { db: tx }),
+            (tx) => new PostgresIdempotencyStore(tx).sweep(now),
             { "app.is_collector": "true" },
           );
+          if (swept) log(`[collector] idempotency: swept ${swept} expired keys`);
+        } catch (err) {
+          log(`[collector] idempotency sweep error: ${String(err)}`);
         }
-        if (attempts || challenges || sessions || auditSwept) {
+        // Auth state sweeps: stale login throttle rows, expired challenges and
+        // rotated/expired sessions (E4/E5 retention).
+        try {
+          const authStore = new PostgresAuthStore(db.db, kek);
+          const auditStore = new PostgresAuditStore(db.db);
+          const ttl = envInt("LOGIN_ATTEMPT_TTL_SECONDS", 86_400, 1);
+          const sessionTtl = envInt("SESSION_RETENTION_SECONDS", 7 * 24 * 3600, 60);
+          const attempts = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepLoginAttempts(ttl, now, { db: tx }), {
+            "app.is_auth_throttle": "true",
+          });
+          const challenges = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepChallenges(now, { db: tx }), {
+            "app.is_collector": "true",
+          });
+          const sessions = await withRlsContext(
+            db.db,
+            COLLECTOR,
+            (tx) => sweepSessions(tx, now, sessionTtl),
+            { "app.is_collector": "true" },
+          );
+          // Audit retention (F2): only the SECURITY DEFINER function can delete
+          // audit rows (append-only for the app role).
+          const auditDays = envInt("AUDIT_RETENTION_DAYS", 365, 0);
+          let auditSwept = 0;
+          if (auditDays > 0) {
+            auditSwept = await withRlsContext(
+              db.db,
+              COLLECTOR,
+              (tx) => auditStore.sweepViaFunction(auditDays, { db: tx }),
+              { "app.is_collector": "true" },
+            );
+          }
+          if (attempts || challenges || sessions || auditSwept) {
+            log(
+              `[collector] auth sweep: ${attempts} attempts, ${challenges} challenges, ${sessions} sessions, ${auditSwept} audit`,
+            );
+          }
+        } catch (err) {
+          const cause = (err as { cause?: { message?: string; detail?: string } }).cause;
           log(
-            `[collector] auth sweep: ${attempts} attempts, ${challenges} challenges, ${sessions} sessions, ${auditSwept} audit`,
+            `[collector] auth sweep error: ${String(err)} | cause: ${cause?.message ?? "?"} ${cause?.detail ?? ""}`,
           );
         }
-      } catch (err) {
-        const cause = (err as { cause?: { message?: string; detail?: string } }).cause;
-        log(
-          `[collector] auth sweep error: ${String(err)} | cause: ${cause?.message ?? "?"} ${cause?.detail ?? ""}`,
-        );
       }
       return { collected: totalCollected, skipped: totalSkipped, failed: totalFailed };
     } catch (err) {
       log(`[collector] pass error: ${String(err)}`);
       return { collected: totalCollected, skipped: totalSkipped, failed: totalFailed };
     } finally {
-      running = false;
+      if (!targetConnectionId) running = false;
     }
   };
 

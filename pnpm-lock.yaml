@@ -149,9 +149,15 @@ importers:
       '@llm-quota/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@llm-quota/connector-antigravity':
+        specifier: workspace:*
+        version: link:../../packages/providers/connectors/antigravity
       '@llm-quota/connector-ollama-claude':
         specifier: workspace:*
         version: link:../../packages/providers/connectors/ollama-claude
+      '@llm-quota/connector-opencode-go':
+        specifier: workspace:*
+        version: link:../../packages/providers/connectors/opencode-go
       '@llm-quota/connector-openrouter':
         specifier: workspace:*
         version: link:../../packages/providers/connectors/openrouter
@@ -340,7 +346,45 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@22.20.2)(tsx@4.23.13))
 
+  packages/providers/connectors/antigravity:
+    dependencies:
+      '@llm-quota/core':
+        specifier: workspace:*
+        version: link:../../../core
+      '@llm-quota/providers':
+        specifier: workspace:*
+        version: link:../..
+      '@llm-quota/shared':
+        specifier: workspace:*
+        version: link:../../../shared
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@22.20.2)(tsx@4.23.13))
+
   packages/providers/connectors/ollama-claude:
+    dependencies:
+      '@llm-quota/core':
+        specifier: workspace:*
+        version: link:../../../core
+      '@llm-quota/providers':
+        specifier: workspace:*
+        version: link:../..
+      '@llm-quota/shared':
+        specifier: workspace:*
+        version: link:../../../shared
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@22.20.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@22.20.2)(tsx@4.23.13))
+
+  packages/providers/connectors/opencode-go:
     dependencies:
       '@llm-quota/core':
         specifier: workspace:*

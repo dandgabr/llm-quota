@@ -10,6 +10,8 @@ import { quotaProviders, users } from "./schema/index.js";
 export const DEFAULT_PROVIDERS = [
   { providerKey: "ollama-claude/api", name: "Ollama Claude", connectorId: "ollama-claude/api", connectionType: "api" as const },
   { providerKey: "openrouter/api", name: "OpenRouter", connectorId: "openrouter/api", connectionType: "api" as const },
+  { providerKey: "opencode-go/api", name: "OpenCode Go", connectorId: "opencode-go/api", connectionType: "api" as const },
+  { providerKey: "antigravity/oauth", name: "Antigravity", connectorId: "antigravity/oauth", connectionType: "oauth" as const },
 ];
 
 /**

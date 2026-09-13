@@ -65,6 +65,8 @@ const base = {
   id: "openrouter/api",
   name: "OpenRouter",
   connectionType: "api" as const,
+  quotaType: "credits" as const,
+  supportedWindows: ["lifetime"] as const,
 };
 
 export const openRouterConnector: ProviderConnector = {

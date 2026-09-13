@@ -10,12 +10,29 @@ export type QuotaWindow = "session" | "daily" | "weekly" | "monthly" | "lifetime
 /** How a quota is expressed: a relative percentage or monetary credits. */
 export type QuotaKind = "percent" | "credits";
 
+export interface ModelGroupQuota {
+  name: string;
+  models?: string[];
+  session?: {
+    usedPercent: number;
+    remainingPercent: number;
+    resetsAt?: string;
+  };
+  weekly?: {
+    usedPercent: number;
+    remainingPercent: number;
+    resetsAt?: string;
+  };
+}
+
 export interface UsagePercent {
   kind: "percent";
   usedPercent: number;
   remainingPercent: number;
   /** When the quota window resets (ISO instant). */
   resetsAt?: string;
+  /** Subdivided model groups (e.g. Gemini Models vs Claude & GPT Models). */
+  modelGroups?: ModelGroupQuota[];
 }
 
 /**

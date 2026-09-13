@@ -95,11 +95,12 @@ export const quotaSnapshots = pgTable(
     kind: quotaKindEnum("kind").notNull().default("percent"),
     window: quotaWindowEnum("window").notNull(),
     currency: varchar("currency", { length: 8 }),
-    /** Monetary credits JSON (used/limit/total/resets_at). */
+    /** Monetary credits JSON (used/limit/total/resets_at) or model groups metadata. */
     credits: jsonb("credits").$type<{
       used?: number;
       limit?: number;
       total?: number;
+      modelGroups?: unknown[];
     }>(),
     /** Percent usage (kind=percent). */
     usedPercent: numeric("used_percent", { precision: 6, scale: 3 }),

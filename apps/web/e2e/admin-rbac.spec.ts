@@ -14,6 +14,6 @@ test.describe("admin RBAC journey", () => {
   test("admin sees the admin console", async ({ seededPage, page }) => {
     await seededPage("/admin", { role: "admin" });
     await expect(page).toHaveURL(/\/admin$/);
-    await expect(page.getByText(/connections:/i)).toBeVisible();
+    await expect(page.getByText(/conexões ativas|active connections/i)).toBeVisible();
   });
 });

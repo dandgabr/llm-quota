@@ -93,27 +93,46 @@
     "testFailed": "Connection validation failed.",
     "label": "Label",
     "noConnections": "No provider connections yet.",
+    "oauthConnect": "Connect with Google Antigravity (OAuth)",
+    "oauthConnecting": "Connecting to Google…",
+    "oauthManualToggle": "Enter Code or Refresh Token manually",
+    "oauthManualHide": "Hide manual input",
+    "oauthManualHint": "Enter the refresh token or credentials JSON",
+    "oauthCodeHint": "Paste the Authorization Code returned by the Google window:",
+    "oauthCodePlaceholder": "4/0A...",
+    "oauthExchange": "Exchange Code",
+    "oauthCorporateToggle": "Corporate Configuration (Optional)",
+    "oauthCorporateHide": "Hide Corporate Configuration",
+    "oauthCorporateDesc": "If your organization has a dedicated project in Google Cloud Console, enter your custom Client ID and Client Secret. Otherwise, leave blank to use the default.",
+    "oauthCorporateClientId": "Corporate Client ID (Google OAuth)",
+    "oauthCorporateClientSecret": "Corporate Client Secret (Google OAuth)",
     "status": {
       "ok": "Connected",
       "error": "Connection error",
       "unconfigured": "Not configured"
-    }
+    },
+    "pendingSyncTitle": "Connections syncing or awaiting data",
+    "pendingSyncDesc": "The following connections have been configured, but the provider has not yet returned quota data or the credentials require validation:"
   },
   "quota": {
     "used": "Used",
     "remaining": "Remaining",
     "reset": "Resets",
     "window": {
-      "session": "Session",
-      "daily": "Daily",
+      "session": "5-Hour Session",
+      "five_hour": "5-Hour Session",
       "weekly": "Weekly",
       "monthly": "Monthly",
       "lifetime": "Lifetime",
-      "credits": "Credits"
+      "credits": "Credits",
+      "subscription": "Subscription"
     },
     "resetsIn": "Resets {time}",
     "expiresIn": "Expires {time}",
-    "noExpiration": "No expiration"
+    "noExpiration": "No expiration",
+    "fiveHourLimit": "Five Hour Limit",
+    "weeklyLimit": "Weekly Limit",
+    "resetsAtText": "Resets at {time}"
   },
   "history": {
     "title": "Spending history",

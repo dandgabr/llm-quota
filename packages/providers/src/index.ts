@@ -6,7 +6,7 @@
  * and the `ProviderRegistry` (provider-management integrator / routing).
  */
 
-import type { ConnectionType, Quota } from "@llm-quota/shared";
+import type { ConnectionType, Quota, QuotaWindow } from "@llm-quota/shared";
 import { type HttpClient, createFetchHttpClient as sharedCreateFetch } from "@llm-quota/shared";
 
 /**
@@ -23,6 +23,14 @@ export type { HttpClient, HttpResponse } from "@llm-quota/shared";
 /** Real `fetch`-backed HttpClient (Node >= 22 global fetch). */
 export const createFetchHttpClient: typeof sharedCreateFetch = sharedCreateFetch;
 
+export interface ProviderOAuthCredentials {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+
 /** Context a connector needs to read a quota for one connection. */
 export interface ProviderContext {
   /** The user-saved connection being read. */
@@ -31,10 +39,16 @@ export interface ProviderContext {
   connectionType: ConnectionType;
   /** API key / secret for `api` connections. Never logged. */
   apiKey?: string;
+  /** OAuth credentials when connectionType is `oauth` or parsed from secret JSON. */
+  oauth?: ProviderOAuthCredentials;
+  /** Target quota window if requested (e.g. session, weekly, daily). */
+  window?: string;
   /** Overridable base URL for the connector endpoint (env config). */
   baseUrl?: string;
   /** Injectable HTTP client; defaults to `fetch`. */
   http?: HttpClient;
+  /** Optional callback to persist updated credentials (e.g. after OAuth token refresh). */
+  saveSecret?: (newSecret: string) => Promise<void>;
 }
 
 export interface ProviderConnector {
@@ -44,6 +58,10 @@ export interface ProviderConnector {
   readonly name: string;
   /** Connection type this connector satisfies. */
   readonly connectionType: ConnectionType;
+  /** Nature of quota: sliding time windows vs. account balance/credits. */
+  readonly quotaType?: "sliding_window" | "credits";
+  /** Explicit quota windows supported by this provider (e.g. session, weekly, monthly). */
+  readonly supportedWindows?: readonly QuotaWindow[];
   /** Read the current quota for a connection and return the raw snapshot. */
   fetchQuota(context: ProviderContext): Promise<QuotaSnapshot>;
   /** Best-effort label autodetection for a connection (optional). */

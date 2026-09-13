@@ -12,6 +12,8 @@ import { quotaSnapshots } from "../schema/quotas.js";
 
 const toNumber = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 
+import type { ModelGroupQuota } from "@llm-quota/shared";
+
 /** Latest snapshot per connection, mapped for the wire (QuotaView). */
 export interface QuotaViewRow {
   id: string;
@@ -25,6 +27,7 @@ export interface QuotaViewRow {
   currency?: string;
   resetAt?: string;
   readAt: string;
+  modelGroups?: ModelGroupQuota[];
 }
 
 interface SnapshotInsert {
@@ -32,7 +35,7 @@ interface SnapshotInsert {
   kind: "percent" | "credits";
   window: "session" | "daily" | "weekly" | "monthly" | "lifetime";
   currency?: string;
-  credits?: { used?: number; limit?: number; total?: number };
+  credits?: { used?: number; limit?: number; total?: number; modelGroups?: ModelGroupQuota[] };
   usedPercent?: number;
   remainingPercent?: number;
   resetsAt?: Date;
@@ -77,13 +80,13 @@ export class PostgresQuotaStore {
         qs.used_percent, qs.remaining_percent, qs.resets_at, qs.read_at
       FROM quota_snapshots qs
       INNER JOIN connections c ON c.id = qs.connection_id
-      WHERE c.user_id = ${userId}
+      WHERE c.user_id = ${userId} AND qs.window != 'daily'
       ORDER BY qs.connection_id, qs.window, qs.read_at DESC
       LIMIT ${limit}
     `);
     const rows = (result as unknown as { rows: Record<string, unknown>[] }).rows ?? [];
     return rows.map((r) => {
-      const credits = (r.credits ?? null) as { used?: number; limit?: number; total?: number } | null;
+      const credits = (r.credits ?? null) as { used?: number; limit?: number; total?: number; modelGroups?: ModelGroupQuota[] } | null;
       return {
         id: String(r.id),
         connectionId: String(r.connection_id),
@@ -96,6 +99,7 @@ export class PostgresQuotaStore {
         currency: (r.currency as string | null) ?? undefined,
         resetAt: r.resets_at ? new Date(r.resets_at as string).toISOString() : undefined,
         readAt: new Date(r.read_at as string).toISOString(),
+        modelGroups: credits?.modelGroups,
       };
     });
   }

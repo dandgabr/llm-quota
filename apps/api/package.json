@@ -18,7 +18,9 @@
   "dependencies": {
     "@hono/node-server": "^2.1.1",
     "@llm-quota/auth": "workspace:*",
+    "@llm-quota/connector-antigravity": "workspace:*",
     "@llm-quota/connector-ollama-claude": "workspace:*",
+    "@llm-quota/connector-opencode-go": "workspace:*",
     "@llm-quota/connector-openrouter": "workspace:*",
     "@llm-quota/core": "workspace:*",
     "@llm-quota/db": "workspace:*",

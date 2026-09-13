@@ -17,6 +17,7 @@ reference + how-to + architecture.
 | [Runbook](runbook.md)                                                  | Operations: bootstrap, sessions, backup/restore, PITR, KEK/password rotation, collector |
 | [Docker / deploy](deploy.md)                                           | Deployment topology, compose profiles, hardening, backup                    |
 | [ADR index](adr/README.md)                                             | Architecture decision records                                              |
+| [Connectors architecture & guide](CONNECTORS.md)                       | Provider connectors, sliding-window vs credit taxonomy, sync pipeline     |
 | [Code doc conventions](architecture/code-documentation-conventions.md) | TSDoc / doc-comment standard for source code                               |
 
 ## ADR numbering note

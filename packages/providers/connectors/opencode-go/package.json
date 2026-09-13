@@ -1,0 +1,24 @@
+{
+  "name": "@llm-quota/connector-opencode-go",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenCode Go (API) provider connector for llm-quota.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@llm-quota/core": "workspace:*",
+    "@llm-quota/providers": "workspace:*",
+    "@llm-quota/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.11"
+  }
+}

@@ -11,6 +11,21 @@
 
 import { createFetchHttpClient, type HttpClient, type HttpResponse } from "@llm-quota/shared";
 
+export interface ModelGroupQuota {
+  name: string;
+  models?: string[];
+  session?: {
+    usedPercent: number;
+    remainingPercent: number;
+    resetsAt?: string;
+  };
+  weekly?: {
+    usedPercent: number;
+    remainingPercent: number;
+    resetsAt?: string;
+  };
+}
+
 export interface QuotaView {
   id: string;
   connectionId: string;
@@ -23,6 +38,7 @@ export interface QuotaView {
   currency?: string;
   resetAt?: string;
   resetsAt?: string;
+  modelGroups?: ModelGroupQuota[];
 }
 
 export interface ConnectionView {
@@ -292,6 +308,28 @@ export class ApiClient {
   }): Promise<ConnectionView> {
     return this.handle<ConnectionView>(
       await this.http.post(`${this.base}/v1/connections`, JSON.stringify(input), {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
+  async getAntigravityAuthUrl(params?: { clientId?: string }): Promise<{ url: string; state: string; code_verifier: string }> {
+    const qs = params?.clientId ? `?client_id=${encodeURIComponent(params.clientId)}` : "";
+    return this.handle<{ url: string; state: string; code_verifier: string }>(
+      await this.http.get(`${this.base}/v1/connections/oauth/antigravity/authorize${qs}`, this.auth()),
+    );
+  }
+
+  async callbackAntigravityOAuth(input: {
+    code: string;
+    code_verifier: string;
+    label?: string;
+    client_id?: string;
+    client_secret?: string;
+  }): Promise<ConnectionView> {
+    return this.handle<ConnectionView>(
+      await this.http.post(`${this.base}/v1/connections/oauth/antigravity/callback`, JSON.stringify(input), {
         ...this.auth(),
         "Content-Type": "application/json",
       }),

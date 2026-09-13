@@ -126,6 +126,8 @@ const base = {
   id: "ollama-claude/api",
   name: "Ollama Claude",
   connectionType: "api" as const,
+  quotaType: "sliding_window" as const,
+  supportedWindows: ["session", "weekly"] as const,
 };
 
 export const ollamaClaudeConnector: ProviderConnector = {

@@ -53,7 +53,7 @@ const ring = computed(() => {
         stroke-linecap="round"
       />
     </svg>
-    <strong class="tabular numeric" :class="{ 'is-val': Boolean(value) }">
+    <strong class="tabular numeric hero-num" :class="{ 'is-val': Boolean(value) }">
       {{ value ?? `${percent}%` }}
     </strong>
     <span class="micro caption">{{ label }}</span>

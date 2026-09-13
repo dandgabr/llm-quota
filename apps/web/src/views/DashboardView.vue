@@ -206,9 +206,9 @@ const pendingConnections = () => {
             <strong class="account-label">{{ heroAccount.label }}</strong>
             <span class="micro provider-subtag">{{ heroAccount.providerKey }}</span>
           </div>
-          <!-- Tag no header: Se for créditos/API mostra CRÉDITOS; senão omite ou mostra janela -->
+          <!-- Tag no header: CRÉDITOS ou ASSINATURA -->
           <span class="micro window-tag">
-            {{ heroAccount.isCredits ? t("quota.window.credits") : (heroAccount.quotas.length === 1 && heroAccount.primaryQuota.window ? (t(`quota.window.${heroAccount.primaryQuota.window}`) || heroAccount.primaryQuota.window) : t("connections.title")) }}
+            {{ heroAccount.isCredits ? t("quota.window.credits") : t("quota.window.subscription") }}
           </span>
         </div>
 
@@ -243,9 +243,76 @@ const pendingConnections = () => {
               </span>
             </template>
 
-            <!-- Provedor percentual ou com múltiplas janelas (Ollama Claude) -->
+            <!-- Provedor percentual ou com múltiplas janelas (Ollama Claude, Antigravity, etc.) -->
             <template v-else>
-              <div class="windows-container">
+              <!-- Se possuir grupos de modelos (Antigravity: Gemini vs Claude & GPT) -->
+              <div v-if="heroAccount.primaryQuota.modelGroups && heroAccount.primaryQuota.modelGroups.length > 0" class="windows-container">
+                <div
+                  v-for="group in heroAccount.primaryQuota.modelGroups"
+                  :key="group.name"
+                  class="model-group-block"
+                >
+                  <div class="model-group-title">
+                    <span class="micro group-heading">{{ group.name }}</span>
+                    <span v-if="group.models" class="micro text-muted">
+                      {{ group.models.join(', ') }}
+                    </span>
+                  </div>
+
+                  <!-- Janela de Sessão -->
+                  <div v-if="group.session" class="window-row">
+                    <div class="window-row-header">
+                      <span class="micro window-pill">{{ t("quota.window.session") }}</span>
+                      <strong class="tabular window-percent">
+                        {{ t("quota.used") }} {{ group.session.usedPercent }}%
+                      </strong>
+                    </div>
+                    <div class="track" aria-hidden="true">
+                      <div
+                        class="fill"
+                        :class="statusTone(group.session.remainingPercent)"
+                        :style="{ width: `${group.session.usedPercent}%` }"
+                      />
+                    </div>
+                    <div class="window-row-footer">
+                      <span class="micro remaining-text">
+                        {{ t("quota.remaining") }} {{ group.session.remainingPercent }}%
+                      </span>
+                      <span v-if="group.session.resetsAt" class="micro reset-time">
+                        ⏱ {{ formatTimeUntil(group.session.resetsAt, false) }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- Janela Semanal -->
+                  <div v-if="group.weekly" class="window-row">
+                    <div class="window-row-header">
+                      <span class="micro window-pill">{{ t("quota.window.weekly") }}</span>
+                      <strong class="tabular window-percent">
+                        {{ t("quota.used") }} {{ group.weekly.usedPercent }}%
+                      </strong>
+                    </div>
+                    <div class="track" aria-hidden="true">
+                      <div
+                        class="fill"
+                        :class="statusTone(group.weekly.remainingPercent)"
+                        :style="{ width: `${group.weekly.usedPercent}%` }"
+                      />
+                    </div>
+                    <div class="window-row-footer">
+                      <span class="micro remaining-text">
+                        {{ t("quota.remaining") }} {{ group.weekly.remainingPercent }}%
+                      </span>
+                      <span v-if="group.weekly.resetsAt" class="micro reset-time">
+                        ⏱ {{ formatTimeUntil(group.weekly.resetsAt, false) }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Padrão sem grupos de modelos (janelas tradicionais) -->
+              <div v-else class="windows-container">
                 <div
                   v-for="q in heroAccount.quotas"
                   :key="q.id"
@@ -294,7 +361,7 @@ const pendingConnections = () => {
               <span class="micro provider-subtag">{{ acc.providerKey }}</span>
             </div>
             <span class="micro window-tag">
-              {{ acc.isCredits ? t("quota.window.credits") : (acc.quotas.length === 1 && acc.primaryQuota.window ? (t(`quota.window.${acc.primaryQuota.window}`) || acc.primaryQuota.window) : '') }}
+              {{ acc.isCredits ? t("quota.window.credits") : t("quota.window.subscription") }}
             </span>
           </div>
 
@@ -309,6 +376,68 @@ const pendingConnections = () => {
             <span v-if="acc.primaryQuota.resetAt || acc.primaryQuota.resetsAt" class="micro reset-time">
               ⏱ {{ formatTimeUntil(acc.primaryQuota.resetAt || acc.primaryQuota.resetsAt, true) }}
             </span>
+          </div>
+
+          <!-- Se possuir grupos de modelos (Antigravity: Gemini vs Claude & GPT) -->
+          <div v-else-if="acc.primaryQuota.modelGroups && acc.primaryQuota.modelGroups.length > 0" class="windows-container secondary-windows">
+            <div
+              v-for="group in acc.primaryQuota.modelGroups"
+              :key="group.name"
+              class="model-group-block"
+            >
+              <div class="model-group-title">
+                <span class="micro group-heading">{{ group.name }}</span>
+                <span v-if="group.models" class="micro text-muted">
+                  {{ group.models.join(', ') }}
+                </span>
+              </div>
+
+              <!-- Janela de Sessão -->
+              <div v-if="group.session" class="window-row">
+                <div class="window-row-header">
+                  <span class="micro window-pill">{{ t("quota.window.session") }}</span>
+                  <span class="micro status">{{ t("quota.used") }} {{ group.session.usedPercent }}%</span>
+                </div>
+                <div class="track" aria-hidden="true">
+                  <div
+                    class="fill"
+                    :class="statusTone(group.session.remainingPercent)"
+                    :style="{ width: `${group.session.usedPercent}%` }"
+                  />
+                </div>
+                <div class="window-row-footer">
+                  <span class="micro remaining-text">
+                    {{ t("quota.remaining") }} {{ group.session.remainingPercent }}%
+                  </span>
+                  <span v-if="group.session.resetsAt" class="micro reset-time">
+                    ⏱ {{ formatTimeUntil(group.session.resetsAt, false) }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Janela Semanal -->
+              <div v-if="group.weekly" class="window-row">
+                <div class="window-row-header">
+                  <span class="micro window-pill">{{ t("quota.window.weekly") }}</span>
+                  <span class="micro status">{{ t("quota.used") }} {{ group.weekly.usedPercent }}%</span>
+                </div>
+                <div class="track" aria-hidden="true">
+                  <div
+                    class="fill"
+                    :class="statusTone(group.weekly.remainingPercent)"
+                    :style="{ width: `${group.weekly.usedPercent}%` }"
+                  />
+                </div>
+                <div class="window-row-footer">
+                  <span class="micro remaining-text">
+                    {{ t("quota.remaining") }} {{ group.weekly.remainingPercent }}%
+                  </span>
+                  <span v-if="group.weekly.resetsAt" class="micro reset-time">
+                    ⏱ {{ formatTimeUntil(group.weekly.resetsAt, false) }}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Se forem janelas múltiplas (Ollama, etc.): lista harmoniosa de janelas -->
@@ -360,17 +489,20 @@ const pendingConnections = () => {
 }
 .grid {
   display: grid;
-  grid-template-columns: 7fr 5fr; /* controlled asymmetry, ADR-011 */
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  align-items: start;
   gap: var(--space-6);
 }
-.stack {
-  display: grid;
-  gap: var(--space-4);
+.hero {
+  grid-column: 1 / -1;
 }
-@media (max-width: 720px) {
-  .grid {
-    grid-template-columns: 1fr;
+@media (min-width: 1200px) {
+  .hero {
+    grid-column: span 1;
   }
+}
+.stack {
+  display: contents;
 }
 .hero-body {
   display: flex;
@@ -472,8 +604,31 @@ const pendingConnections = () => {
 .windows-container {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
   width: 100%;
+}
+.model-group-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-hairline);
+}
+.model-group-block:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.model-group-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.group-heading {
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
 }
 .window-row {
   display: flex;

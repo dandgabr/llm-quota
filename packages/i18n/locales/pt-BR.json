@@ -94,27 +94,46 @@
     "testFailed": "Falha na validação da conexão.",
     "label": "Rótulo",
     "noConnections": "Nenhuma conexão de provedor ainda.",
+    "oauthConnect": "Conectar com Google Antigravity (OAuth)",
+    "oauthConnecting": "Conectando ao Google…",
+    "oauthManualToggle": "Inserir Código ou Refresh Token manualmente",
+    "oauthManualHide": "Ocultar entrada manual",
+    "oauthManualHint": "Insira o token de atualização (refresh token) ou JSON de credenciais",
+    "oauthCodeHint": "Cole o Authorization Code retornado pela janela do Google:",
+    "oauthCodePlaceholder": "4/0A...",
+    "oauthExchange": "Validar Código",
+    "oauthCorporateToggle": "Configuração Corporativa (Opcional)",
+    "oauthCorporateHide": "Ocultar Configuração Corporativa",
+    "oauthCorporateDesc": "Se sua empresa possui um projeto dedicado no Google Cloud Console, informe seu Client ID e Client Secret customizados. Caso contrário, deixe em branco para usar o padrão.",
+    "oauthCorporateClientId": "Client ID Corporativo (Google OAuth)",
+    "oauthCorporateClientSecret": "Client Secret Corporativo (Google OAuth)",
     "status": {
       "ok": "Conectado",
       "error": "Erro de conexão",
       "unconfigured": "Não configurado"
-    }
+    },
+    "pendingSyncTitle": "Conexões em sincronização ou aguardando dados",
+    "pendingSyncDesc": "As seguintes conexões foram cadastradas, mas o provedor ainda não retornou cotas ou a chave precisa de validação:"
   },
   "quota": {
     "used": "Usado",
     "remaining": "Restante",
     "reset": "Reinicia",
     "window": {
-      "session": "Sessão",
-      "daily": "Diária",
-      "weekly": "Semanal",
-      "monthly": "Mensal",
+      "session": "Uso de 5 horas",
+      "five_hour": "Uso de 5 horas",
+      "weekly": "Uso Semanal",
+      "monthly": "Uso Mensal",
       "lifetime": "Vitalício",
-      "credits": "Créditos"
+      "credits": "Créditos",
+      "subscription": "Assinatura"
     },
     "resetsIn": "Reinicia {time}",
     "expiresIn": "Expira {time}",
-    "noExpiration": "Sem expiração"
+    "noExpiration": "Sem expiração",
+    "fiveHourLimit": "Limite de 5 Horas",
+    "weeklyLimit": "Limite Semanal",
+    "resetsAtText": "Reseta às {time}"
   },
   "history": {
     "title": "Histórico de gastos",

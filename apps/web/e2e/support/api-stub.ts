@@ -270,6 +270,32 @@ const server = createServer(async (req, res) => {
       data: [{ id: "sess-1", createdAt: "2026-09-11T00:00:00Z" }],
     });
   }
+  if (url.pathname === "/v1/connections/oauth/antigravity/authorize" && req.method === "GET") {
+    if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
+    return json(res, 200, {
+      url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=stub-client-id&response_type=code",
+      state: "stub-state-123",
+      code_verifier: "stub-verifier-456",
+    });
+  }
+  if (url.pathname === "/v1/connections/oauth/antigravity/callback" && req.method === "POST") {
+    if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
+    const body = await readBody(req);
+    const parsed = JSON.parse(body || "{}") as { code?: string; code_verifier?: string; label?: string };
+    if (!parsed.code || !parsed.code_verifier) {
+      return json(res, 400, { title: "Bad Request", detail: "code and code_verifier are required", status: 400 });
+    }
+    const conn: Connection = {
+      id: `conn-${Date.now()}`,
+      providerKey: "antigravity/oauth",
+      label: parsed.label || "Antigravity",
+      connectionType: "oauth",
+      status: "ok",
+      createdAt: new Date().toISOString(),
+    };
+    state.connections.push(conn);
+    return json(res, 201, conn);
+  }
   if (url.pathname === "/v1/connections/test" && req.method === "POST") {
     if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
     const body = await readBody(req);
@@ -316,6 +342,33 @@ const server = createServer(async (req, res) => {
     if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
     if (role === "user") return json(res, 403, { title: "Forbidden", status: 403 });
     return json(res, 200, { summary: {} });
+  }
+
+  // ---- Admin settings & sync -----------------------------------------------
+  if (url.pathname === "/v1/admin/settings") {
+    if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
+    if (role !== "admin") return json(res, 403, { title: "Forbidden", status: 403 });
+    if (req.method === "PATCH") {
+      const parsed = JSON.parse((await readBody(req)) || "{}") as { collectIntervalMs?: number };
+      return json(res, 200, {
+        collectIntervalMs: parsed.collectIntervalMs ?? 60000,
+        tls: { active: false, managedByProxy: true, certPath: null },
+        instance: { uptimeSeconds: 3600, nodeVersion: process.version },
+      });
+    }
+    return json(res, 200, {
+      collectIntervalMs: 60000,
+      tls: { active: false, managedByProxy: true, certPath: null },
+      instance: { uptimeSeconds: 3600, nodeVersion: process.version },
+    });
+  }
+  if (url.pathname === "/v1/admin/collector/sync" && req.method === "POST") {
+    if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
+    if (role !== "admin") return json(res, 403, { title: "Forbidden", status: 403 });
+    return json(res, 200, {
+      status: "ok",
+      result: { collected: 1, skipped: 0, failed: 0 },
+    });
   }
 
   // ---- User management (Phase A) ------------------------------------------

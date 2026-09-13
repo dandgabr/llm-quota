@@ -11,6 +11,20 @@ const config = {
   },
   server: {
     port: 5173,
+    proxy: {
+      "/auth": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+      "/v1": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+      "/health": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+    },
   },
   /**
    * Unit tests (jsdom): pure logic only. Browser journeys live in e2e/ and run

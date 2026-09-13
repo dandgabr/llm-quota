@@ -73,6 +73,7 @@ function onSubmit() {
         autocomplete="new-password"
         minlength="12"
         required
+        aria-describedby="password-rules"
       >
     </label>
     <label>
@@ -84,6 +85,22 @@ function onSubmit() {
         required
       >
     </label>
+
+    <div id="password-rules" class="password-checklist">
+      <span class="micro">{{ t("onboarding.passwordRulesTitle") }}</span>
+      <ul class="checklist">
+        <li :class="{ met: form.password.length >= 12 }">
+          <span class="icon">{{ form.password.length >= 12 ? "✓" : "○" }}</span>
+          {{ t("onboarding.passwordRuleMinLength") }}
+          <span v-if="form.password" class="tabular">({{ form.password.length }}/12)</span>
+        </li>
+        <li :class="{ met: Boolean(form.password && form.confirm && form.password === form.confirm) }">
+          <span class="icon">{{ Boolean(form.password && form.confirm && form.password === form.confirm) ? "✓" : "○" }}</span>
+          {{ t("onboarding.passwordRuleMatch") }}
+        </li>
+      </ul>
+    </div>
+
     <p
       v-if="form.confirm && form.password !== form.confirm"
       class="error"
@@ -110,6 +127,36 @@ label {
   gap: var(--space-1);
   color: var(--text-secondary);
   font-size: 13px;
+}
+.password-checklist {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-base);
+  border: var(--border-hairline);
+  border-radius: var(--radius-control);
+}
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  transition: color var(--transition-fast);
+}
+.checklist li.met {
+  color: var(--status-success);
+}
+.checklist .icon {
+  font-family: var(--font-mono);
+  font-weight: bold;
 }
 .error {
   color: var(--status-danger);

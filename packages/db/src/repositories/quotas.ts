@@ -62,7 +62,7 @@ export class PostgresQuotaStore {
   }
 
   /**
-   * Latest snapshot per connection for a user (DISTINCT ON), joined through
+   * Latest snapshot per connection and window for a user (DISTINCT ON), joined through
    * connections for owner-scoping. Call inside a withRlsContext transaction.
    */
   async latestPerConnection(
@@ -72,13 +72,13 @@ export class PostgresQuotaStore {
     const handle = opts.db ?? this.db;
     const limit = opts.limit ?? 100;
     const result = await handle.execute(sql`
-      SELECT DISTINCT ON (qs.connection_id)
+      SELECT DISTINCT ON (qs.connection_id, qs.window)
         qs.id, qs.connection_id, qs.kind, qs.window, qs.currency, qs.credits,
         qs.used_percent, qs.remaining_percent, qs.resets_at, qs.read_at
       FROM quota_snapshots qs
       INNER JOIN connections c ON c.id = qs.connection_id
       WHERE c.user_id = ${userId}
-      ORDER BY qs.connection_id, qs.read_at DESC
+      ORDER BY qs.connection_id, qs.window, qs.read_at DESC
       LIMIT ${limit}
     `);
     const rows = (result as unknown as { rows: Record<string, unknown>[] }).rows ?? [];
@@ -110,6 +110,36 @@ export class PostgresQuotaStore {
       .select()
       .from(quotaSnapshots)
       .where(eq(quotaSnapshots.connectionId, connectionId))
+      .orderBy(desc(quotaSnapshots.readAt))
+      .limit(1);
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      id: r.id,
+      connectionId: r.connectionId,
+      kind: r.kind,
+      window: r.window,
+      usedPercent: toNumber(r.usedPercent),
+      remainingPercent: toNumber(r.remainingPercent),
+      usedAmount: r.credits?.used,
+      remainingAmount: r.credits?.total,
+      currency: r.currency ?? undefined,
+      resetAt: r.resetsAt?.toISOString(),
+      readAt: r.readAt.toISOString(),
+    };
+  }
+
+  /** Latest snapshot for one connection and window. */
+  async latestForConnectionAndWindow(
+    connectionId: string,
+    window: "session" | "daily" | "weekly" | "monthly" | "lifetime",
+    opts: { db?: DB } = {},
+  ): Promise<QuotaViewRow | null> {
+    const handle = opts.db ?? this.db;
+    const rows = await handle
+      .select()
+      .from(quotaSnapshots)
+      .where(sql`${quotaSnapshots.connectionId} = ${connectionId} AND ${quotaSnapshots.window} = ${window}`)
       .orderBy(desc(quotaSnapshots.readAt))
       .limit(1);
     const r = rows[0];

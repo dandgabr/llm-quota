@@ -30,6 +30,7 @@ import {
   PostgresAuditStore,
   PostgresQuotaStore,
   sweepSessions,
+  seedProviders,
   type DbHandle,
   type ResolvedPrincipal,
 } from "@llm-quota/db";
@@ -376,6 +377,14 @@ export function createDefaultRegistry(): ProviderRegistry {
  * per owner context so FORCE RLS scopes the snapshot/aggregate writes. Also
  * applies the 12-month aggregate retention and the 7-day snapshot TTL.
  */
+let activeCollectorTrigger: (() => Promise<{ collected: number; skipped: number; failed: number }>) | null = null;
+
+/** Trigger a collection pass immediately if a collector is running. */
+export async function triggerCollectorSync(): Promise<{ collected: number; skipped: number; failed: number } | null> {
+  if (!activeCollectorTrigger) return null;
+  return activeCollectorTrigger();
+}
+
 export function startCollector(
   db: DbHandle,
   kek: Dek,
@@ -394,9 +403,12 @@ export function startCollector(
   };
 
   let running = false;
-  const pass = async (): Promise<void> => {
-    if (running) return;
+  const pass = async (): Promise<{ collected: number; skipped: number; failed: number }> => {
+    if (running) return { collected: 0, skipped: 0, failed: 0 };
     running = true;
+    let totalCollected = 0;
+    let totalSkipped = 0;
+    let totalFailed = 0;
     try {
       const rows = await withRlsContext(
         db.db,
@@ -417,31 +429,47 @@ export function startCollector(
             if (!conn) return;
             const connectorId = await connStore.providerConnectorId(row.providerId, { db: tx });
             if (!connectorId) return;
+            // Ollama Cloud exposes session and weekly usage windows; other providers poll daily/monthly.
+            const windowsToPoll: ("session" | "weekly" | "daily")[] =
+              connectorId.startsWith("ollama") ? ["session", "weekly"] : ["daily"];
+
             const quotaStore = new PostgresQuotaStore(tx);
-            const latest = await quotaStore.latestForConnection(row.id, { db: tx });
-            const result = await runCollectPass(
-              registry,
-              new PostgresHistoryStore(tx),
-              [
-                {
+            const collectItems = await Promise.all(
+              windowsToPoll.map(async (win) => {
+                const latestForWin = await quotaStore.latestForConnectionAndWindow(row.id, win, { db: tx });
+                return {
                   id: conn.id,
                   userId: conn.userId,
                   providerId: row.providerId,
                   connectorId,
-                  // v1 collections run on the daily calendar window (hourly
-                  // interval); per-connection windows land with the settings UI.
-                  window: "daily",
-                  lastCollectedAt: latest?.readAt,
+                  window: win,
+                  lastCollectedAt: latestForWin?.readAt,
                   secret: conn.secret,
-                },
-              ],
+                };
+              }),
+            );
+
+            const result = await runCollectPass(
+              registry,
+              new PostgresHistoryStore(tx),
+              collectItems,
               new Date(),
               200,
               quotaStore,
+              log,
             );
-            log(
-              `[collector] connection=${conn.id} collected=${result.collected} skipped=${result.skipped} failed=${result.failed}`,
-            );
+            totalCollected += result.collected;
+            totalSkipped += result.skipped;
+            totalFailed += result.failed;
+            if (result.failed > 0) {
+              log(
+                `[collector] connection=${conn.id} (${connectorId}) FAILED to fetch quota`,
+              );
+            } else {
+              log(
+                `[collector] connection=${conn.id} collected=${result.collected} skipped=${result.skipped} failed=${result.failed}`,
+              );
+            }
           });
         } catch (err) {
           log(`[collector] connection=${row.id} error: ${String(err)}`);
@@ -485,7 +513,7 @@ export function startCollector(
         const ttl = envInt("LOGIN_ATTEMPT_TTL_SECONDS", 86_400, 1);
         const sessionTtl = envInt("SESSION_RETENTION_SECONDS", 7 * 24 * 3600, 60);
         const attempts = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepLoginAttempts(ttl, now, { db: tx }), {
-          "app.is_collector": "true",
+          "app.is_auth_throttle": "true",
         });
         const challenges = await withRlsContext(db.db, COLLECTOR, (tx) => authStore.sweepChallenges(now, { db: tx }), {
           "app.is_collector": "true",
@@ -514,14 +542,21 @@ export function startCollector(
           );
         }
       } catch (err) {
-        log(`[collector] auth sweep error: ${String(err)}`);
+        const cause = (err as { cause?: { message?: string; detail?: string } }).cause;
+        log(
+          `[collector] auth sweep error: ${String(err)} | cause: ${cause?.message ?? "?"} ${cause?.detail ?? ""}`,
+        );
       }
+      return { collected: totalCollected, skipped: totalSkipped, failed: totalFailed };
     } catch (err) {
       log(`[collector] pass error: ${String(err)}`);
+      return { collected: totalCollected, skipped: totalSkipped, failed: totalFailed };
     } finally {
       running = false;
     }
   };
+
+  activeCollectorTrigger = pass;
 
   const first = setTimeout(() => void pass(), 5_000);
   first.unref?.();
@@ -529,6 +564,7 @@ export function startCollector(
   timer.unref?.();
 
   return () => {
+    activeCollectorTrigger = null;
     clearTimeout(first);
     clearInterval(timer);
   };
@@ -563,6 +599,12 @@ export async function bootstrapFirstRun(
   } catch (err) {
     log(`[llm-quota] bootstrap skipped: ${String(err)}`);
     return null;
+  } finally {
+    try {
+      await seedProviders(db.db);
+    } catch (seedErr) {
+      log(`[llm-quota] seedProviders warning: ${String(seedErr)}`);
+    }
   }
 }
 

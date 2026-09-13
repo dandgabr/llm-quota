@@ -29,6 +29,9 @@
     "password": "Password",
     "confirmPassword": "Confirm password",
     "passwordMismatch": "Passwords do not match.",
+    "passwordRulesTitle": "Password requirements",
+    "passwordRuleMinLength": "At least 12 characters",
+    "passwordRuleMatch": "Passwords match",
     "createAdmin": "Create administrator",
     "setupError": "Setup failed. Check the code and try again.",
     "doneTitle": "You're all set.",
@@ -78,6 +81,16 @@
   "connections": {
     "title": "Provider connections",
     "add": "Add connection",
+    "edit": "Edit connection",
+    "delete": "Delete",
+    "deleteConfirm": "Are you sure you want to delete this connection?",
+    "save": "Save",
+    "cancel": "Cancel",
+    "secretOptional": "New API key (leave blank to keep current)",
+    "test": "Test connection",
+    "testing": "Testing connection…",
+    "testSuccess": "Connection validated successfully!",
+    "testFailed": "Connection validation failed.",
     "label": "Label",
     "noConnections": "No provider connections yet.",
     "status": {
@@ -95,8 +108,12 @@
       "daily": "Daily",
       "weekly": "Weekly",
       "monthly": "Monthly",
-      "lifetime": "Lifetime"
-    }
+      "lifetime": "Lifetime",
+      "credits": "Credits"
+    },
+    "resetsIn": "Resets {time}",
+    "expiresIn": "Expires {time}",
+    "noExpiration": "No expiration"
   },
   "history": {
     "title": "Spending history",
@@ -105,9 +122,34 @@
     "monthly": "Monthly"
   },
   "admin": {
+    "title": "System Administration",
     "users": "Users",
     "audit": "Audit log",
-    "identityProviders": "Identity providers"
+    "identityProviders": "Identity providers",
+    "systemSettings": "System Settings",
+    "collector": "Collection & Synchronization",
+    "collectorDesc": "Control the frequency at which quotas from all providers are inspected.",
+    "refreshInterval": "Refresh interval",
+    "seconds": "seconds",
+    "minutes": "minutes",
+    "save": "Save changes",
+    "saving": "Saving…",
+    "saved": "Settings saved successfully!",
+    "syncNow": "Sync Now",
+    "syncing": "Syncing quotas…",
+    "syncSuccess": "Sync completed successfully!",
+    "syncResult": "Collected: {collected} · Skipped: {skipped} · Failed: {failed}",
+    "tls": "TLS Security & Certificates",
+    "tlsDesc": "Transit encryption status and digital certificate validity.",
+    "tlsActive": "HTTPS / TLS Active",
+    "tlsManaged": "Managed by Ingress / Reverse Proxy",
+    "tlsValidUntil": "Valid until",
+    "tlsDaysRemaining": "Days remaining",
+    "days": "days",
+    "integrity": "Integrity & Audit",
+    "integrityDesc": "Cryptographically chained audit trail using SHA-256 hashes.",
+    "eventsTotal": "Total recorded events",
+    "verifyIntegrity": "Verify chain integrity"
   },
   "audit": {
     "title": "Audit log",

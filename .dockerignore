@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+**/test-results
+**/playwright-report
+**/.playwright
+**/certs
+**/pgdata
+**/backups
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+docs

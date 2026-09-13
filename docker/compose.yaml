@@ -31,9 +31,9 @@ services:
       # Idempotent first-boot provisioning: creates llmquota_app with the
       # env-provided password (runs only on an empty data volume).
       - ./pg/init-prod.sh:/docker-entrypoint-initdb.d/10-init-app-role.sh:ro,z
-      # TLS server cert/key (H4). Generate with scripts/cert-postgres.sh.
-      - ../certs/postgres.crt:/etc/postgresql/postgres.crt:ro,z
-      - ../certs/postgres.key:/etc/postgresql/postgres.key:ro,z
+      # TLS material (H4): copied into the data volume by init-prod.sh with the
+      # correct owner, so ssl=on works under the postgres user.
+      - llm-quota_pgcerts:/etc/postgresql:ro
     command:
       - -c
       - ssl=on
@@ -41,7 +41,6 @@ services:
       - ssl_cert_file=/etc/postgresql/postgres.crt
       - -c
       - ssl_key_file=/etc/postgresql/postgres.key
-    user: postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmquota} -d ${POSTGRES_DB:-llm_quota}"]
       interval: 5s
@@ -73,7 +72,7 @@ services:
       LOCKOUT_BASE_SECONDS: ${LOCKOUT_BASE_SECONDS:-30}
       LOCKOUT_MAX_SECONDS: ${LOCKOUT_MAX_SECONDS:-3600}
       LOCKOUT_ACCOUNT_THRESHOLD: ${LOCKOUT_ACCOUNT_THRESHOLD:-50}
-      LOCKOUT_ACCOUNT_DELAY_MS: ${LOCKOUT_ACCOUNT_DELAY_MS:-1500}
+      LOCKOUT_ACCOUNT_DELAY_MS: ${LOCKOUT_ACCOUNT_DELAY_MS:-300}
       SESSION_ROTATE_SECONDS: ${SESSION_ROTATE_SECONDS:-21600}
       SESSION_ROTATE_GRACE_SECONDS: ${SESSION_ROTATE_GRACE_SECONDS:-60}
       AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
@@ -99,7 +98,7 @@ services:
       context: ..
       dockerfile: apps/web/Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL:-https://localhost}
+        VITE_API_URL: ${VITE_API_URL:-}
     restart: unless-stopped
     # Loopback only: browsers must reach the SPA through the TLS edge (or an
     # external ingress). Use --profile edge for the bundled nginx TLS edge.
@@ -142,6 +141,8 @@ services:
 volumes:
   pgdata:
     name: ${COMPOSE_PROJECT_NAME:-llm-quota}_pgdata
+  llm-quota_pgcerts:
+    external: true
 
 networks:
   internal:

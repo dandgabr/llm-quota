@@ -1,13 +1,30 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import { PublicApiClient, ApiError } from "../lib/api";
 import { useTranslator } from "../lib/i18n";
+import { isSetupRequired, setSetupRequired } from "../router/index.js";
 
 const t = useTranslator();
 const auth = useAuthStore();
 const router = useRouter();
+
+onMounted(async () => {
+  if (isSetupRequired()) {
+    void router.replace({ name: "setup" });
+    return;
+  }
+  try {
+    const status = await new PublicApiClient().setupStatus();
+    if (status.required) {
+      setSetupRequired(true);
+      void router.replace({ name: "setup" });
+    }
+  } catch {
+    // offline/stub
+  }
+});
 
 const step = ref<"credentials" | "mfa">("credentials");
 const email = ref("");
@@ -42,8 +59,14 @@ async function submitCredentials() {
     const session = res as { token: string; user: { role: "user" | "supervisor" | "admin" } };
     auth.login({ token: session.token, role: session.user.role });
     void router.push({ name: "dashboard" });
-  } catch {
-    error.value = t("auth.invalidCredentials");
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 429) {
+      error.value = err.detail || t("auth.rateLimited") || t("auth.invalidCredentials");
+    } else if (err instanceof ApiError && err.detail) {
+      error.value = err.detail;
+    } else {
+      error.value = t("auth.invalidCredentials");
+    }
   } finally {
     submitting.value = false;
   }

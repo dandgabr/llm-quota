@@ -6,10 +6,10 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig*.json turbo.json ./
 COPY packages/ packages/
-COPY apps/api/package.json apps/api/package.json
+COPY apps/api/ apps/api/
 COPY apps/web/ apps/web/
 RUN pnpm install --frozen-lockfile
-ARG VITE_API_URL=http://localhost:3000
+ARG VITE_API_URL=""
 ENV VITE_API_URL=$VITE_API_URL
 # Full workspace build first: the SPA imports @llm-quota/shared etc. whose
 # entrypoints are dist/ outputs.

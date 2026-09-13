@@ -63,6 +63,23 @@ describe("ApiClient", () => {
     expect(posted).toBe(true);
   });
 
+  it("tests a connection via POST to /v1/connections/test", async () => {
+    let tested = false;
+    const http = makeHttp({
+      post: async (url, body, headers) => {
+        tested = true;
+        expect(url).toContain("/v1/connections/test");
+        expect(String(body)).toContain("hunter2");
+        expect(headers?.["Authorization"]).toBe("Bearer tok");
+        return { status: 200, ok: true, json: async () => ({ ok: true, quota: { kind: "percent", usedPercent: 10 } }), text: async () => "", header: () => null };
+      },
+    });
+    const api = new ApiClient("tok", { http, baseUrl: "http://x" });
+    const res = await api.testConnection({ providerId: "ollama-claude/api", secret: "hunter2" });
+    expect(tested).toBe(true);
+    expect(res.ok).toBe(true);
+  });
+
   it("throws a typed ApiError carrying the problem type", async () => {
     const http = makeHttp({
       delete: async () => ({

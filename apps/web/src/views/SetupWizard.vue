@@ -51,13 +51,23 @@ async function submit(value: { email: string; password: string; firstName: strin
     done.value = true;
     setTimeout(() => void router.push({ name: "dashboard" }), 800);
   } catch (err) {
-    if (err instanceof ApiError && err.status === 409) {
-      // Already initialized: send to login.
-      setSetupRequired(false);
-      void router.replace({ name: "login" });
-      return;
+    if (err instanceof ApiError) {
+      if (err.status === 409) {
+        // Already initialized: send to login.
+        setSetupRequired(false);
+        void router.replace({ name: "login" });
+        return;
+      }
+      if (err.status === 403) {
+        error.value = t("onboarding.invalidSetupCode");
+        return;
+      }
+      if (err.status === 400) {
+        error.value = err.detail || t("onboarding.setupError");
+        return;
+      }
     }
-    error.value = err instanceof ApiError && err.status === 403 ? t("onboarding.invalidSetupCode") : t("onboarding.setupError");
+    error.value = t("onboarding.setupError");
   } finally {
     busy.value = false;
   }

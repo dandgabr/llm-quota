@@ -20,9 +20,14 @@ interface OpenRouterCreditsResponse {
   data?: {
     /** Monetary credits remaining in the account (USD). */
     credits?: number;
+    total_credits?: number;
+    total_usage?: number;
+    usage?: number;
     currency?: string;
   };
   total_credits?: number;
+  credits?: number;
+  total_usage?: number;
   usage?: number;
   usage_ratio?: number;
 }
@@ -31,13 +36,15 @@ interface OpenRouterCreditsResponse {
 export function parseOpenRouterQuota(body: unknown): QuotaSnapshot {
   const raw = (body ?? {}) as OpenRouterCreditsResponse;
 
-  // Credit-based: account credits remaining (shape 2.1).
-  const credits = raw.data?.credits ?? raw.total_credits;
+  // Credit-based: account credits remaining or total credits (shape 2.1).
+  const credits = raw.data?.total_credits ?? raw.data?.credits ?? raw.total_credits ?? raw.credits;
+  const used = raw.data?.total_usage ?? raw.data?.usage ?? raw.total_usage ?? raw.usage;
   if (typeof credits === "number") {
     return {
       kind: "credits",
       currency: raw.data?.currency ?? "USD",
       total: credits,
+      ...(typeof used === "number" ? { used } : {}),
     };
   }
 

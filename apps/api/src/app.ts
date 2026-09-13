@@ -38,6 +38,9 @@ import {
   type Role,
 } from "@llm-quota/db";
 import { parseKekFromEnv, windowKey, type Dek, type Granularity } from "@llm-quota/core";
+import { ProviderRegistry } from "@llm-quota/providers";
+import { ollamaClaudeConnector } from "@llm-quota/connector-ollama-claude";
+import { openRouterConnector } from "@llm-quota/connector-openrouter";
 import {
   hasRole,
   generatePkcePair,
@@ -124,6 +127,8 @@ export interface ApiAppOptions {
   publicWebUrl?: string;
   /** Idle session timeout in seconds (0 disables; absolute expiry still applies). */
   sessionIdleTtlSeconds?: number;
+  /** Provider registry for connection testing / quota collection. */
+  registry?: ProviderRegistry;
   /** Login throttle config (E4); defaults come from env. */
   loginThrottle?: {
     enabled: boolean;
@@ -225,8 +230,15 @@ export function createApiApp({
   publicWebUrl,
   sessionIdleTtlSeconds,
   loginThrottle,
+  registry: injectedRegistry,
 }: ApiAppOptions) {
   const app = new Hono<{ Variables: Variables }>();
+  const registry = injectedRegistry ?? (() => {
+    const r = new ProviderRegistry();
+    r.register(ollamaClaudeConnector);
+    r.register(openRouterConnector);
+    return r;
+  })();
   const connStore = new PostgresConnectionStore(db.db, kek ?? parseKekFromEnv());
   const historyStore = new PostgresHistoryStore(db.db);
   const quotaStore = new PostgresQuotaStore(db.db);
@@ -1504,6 +1516,100 @@ export function createApiApp({
     return c.body(null, 204);
   });
 
+  // ---- System Settings & Operations (Admin) --------------------------------
+  app.get("/v1/admin/settings", async (c) => {
+    const p = requireAdmin(c);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
+
+    const instanceStore = new PostgresInstanceStore(db.db);
+    const configuredInterval = await instanceStore.getSetting<number>("collector_interval_ms").catch(() => null);
+    const envInterval = Number(process.env.COLLECT_INTERVAL_MS ?? 60_000);
+    const collectIntervalMs = configuredInterval ?? (Number.isFinite(envInterval) && envInterval >= 10_000 ? envInterval : 60_000);
+
+    const tlsCertPath = process.env.TLS_CERT_PATH;
+    const tlsKeyPath = process.env.TLS_KEY_PATH;
+    const isTlsDirect = Boolean(tlsCertPath && tlsKeyPath);
+
+    return c.json({
+      collectIntervalMs,
+      tls: {
+        active: isTlsDirect,
+        managedByProxy: !isTlsDirect,
+        certPath: tlsCertPath ?? null,
+      },
+      instance: {
+        uptimeSeconds: Math.round(process.uptime()),
+        nodeVersion: process.version,
+      },
+    });
+  });
+
+  app.patch("/v1/admin/settings", async (c) => {
+    const p = requireAdmin(c);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
+
+    const body = await c.req.json<{ collectIntervalMs?: number }>().catch(() => null);
+    if (!body || typeof body.collectIntervalMs !== "number" || body.collectIntervalMs < 10_000 || body.collectIntervalMs > 3_600_000) {
+      return problemJson(c, problem(400, "Bad Request", "collectIntervalMs must be a number between 10000 and 3600000 ms", "invalid_params"));
+    }
+
+    const instanceStore = new PostgresInstanceStore(db.db);
+    await instanceStore.setSetting("collector_interval_ms", body.collectIntervalMs);
+
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.record(
+          {
+            action: "system.retention",
+            actorUserId: p.userId,
+            actorRole: p.role,
+            targetType: "system_settings",
+            targetId: "collector_interval_ms",
+            metadata: { newIntervalMs: body.collectIntervalMs },
+            requestId: c.get("requestId"),
+          },
+          { db: tx },
+        ),
+    );
+
+    return c.json({ ok: true, collectIntervalMs: body.collectIntervalMs });
+  });
+
+  app.post("/v1/admin/collector/sync-now", async (c) => {
+    const p = requireAdmin(c);
+    if (!p) return problemJson(c, problem(403, "Forbidden", "Admin role required", "forbidden"));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const serverModule = await import("./server.js").catch(() => null);
+    const trigger = serverModule?.triggerCollectorSync;
+    const result = trigger ? await trigger() : { collected: 0, skipped: 0, failed: 0 };
+
+    await withRlsContext(
+      db.db,
+      p,
+      (tx) =>
+        auditStore.record(
+          {
+            action: "system.retention",
+            actorUserId: p.userId,
+            actorRole: p.role,
+            targetType: "collector",
+            targetId: "sync_now",
+            metadata: result ?? {},
+            requestId: c.get("requestId"),
+          },
+          { db: tx },
+        ),
+    );
+
+    return c.json({
+      ok: true,
+      result: result ?? { collected: 0, skipped: 0, failed: 0 },
+    });
+  });
+
   // Connections list: safe DTO projection (never the secret cipher).
   app.get("/v1/connections", async (c) => {
     const p = c.get("principal");
@@ -1542,6 +1648,44 @@ export function createApiApp({
     return c.body(null, 204);
   });
 
+  app.post("/v1/connections/test", async (c) => {
+    const body = await c.req
+      .json<{
+        providerId?: string;
+        connectionType?: "api" | "oauth";
+        secret?: string;
+        baseUrl?: string;
+      }>()
+      .catch(() => null);
+    const secret = (body?.secret ?? "").trim();
+    if (!body?.providerId || !secret) {
+      return problemJson(c, problem(400, "Bad Request", "providerId and secret are required", "invalid_params"));
+    }
+
+    const providerRow = await connStore.resolveProvider(body.providerId);
+    if (!providerRow) {
+      return problemJson(c, problem(400, "Bad Request", `Unknown provider: ${body.providerId}`, "invalid_params"));
+    }
+
+    const connector = registry.get(providerRow.connectorId);
+    if (!connector) {
+      return problemJson(c, problem(400, "Bad Request", `No connector registered for ${providerRow.connectorId}`, "invalid_params"));
+    }
+
+    try {
+      const quota = await connector.fetchQuota({
+        connectionId: "test",
+        connectionType: body.connectionType ?? "api",
+        apiKey: secret,
+        baseUrl: body.baseUrl,
+      });
+      return c.json({ ok: true, quota });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Connection validation failed";
+      return problemJson(c, problem(400, "Bad Request", message, "invalid_params"));
+    }
+  });
+
   app.post("/v1/connections", async (c) => {
     const body = await c.req
       .json<{
@@ -1555,12 +1699,19 @@ export function createApiApp({
     if (!body?.providerId || !secret) {
       return problemJson(c, problem(400, "Bad Request", "providerId and secret are required", "invalid_params"));
     }
+
+    // Resolve provider by key or id so client can send "ollama-claude/api" directly
+    const resolved = await connStore.resolveProvider(body.providerId);
+    if (!resolved) {
+      return problemJson(c, problem(400, "Bad Request", `Unknown provider: ${body.providerId}`, "invalid_params"));
+    }
+
     const p = c.get("principal");
     try {
       const view = await withRlsContext(db.db, p, async (tx) => {
         const created = await connStore.createAndReturnView({
           userId: p.userId,
-          providerId: body.providerId!,
+          providerId: resolved.id,
           label: body.label ?? "unnamed",
           connectionType: body.connectionType ?? "api",
           secret,
@@ -1585,6 +1736,70 @@ export function createApiApp({
       // Unknown providerId trips the FK constraint -> client error, not 500.
       return problemJson(c, problem(400, "Bad Request", "Connection rejected", "invalid_params"));
     }
+  });
+
+  app.patch("/v1/connections/:id", async (c) => {
+    const p = c.get("principal");
+    const connId = c.req.param("id");
+    const body = await c.req
+      .json<{
+        label?: string;
+        secret?: string;
+      }>()
+      .catch(() => null);
+
+    if (!body || (body.label === undefined && body.secret === undefined)) {
+      return problemJson(c, problem(400, "Bad Request", "label or secret must be provided", "invalid_params"));
+    }
+
+    try {
+      const updated = await withRlsContext(db.db, p, async (tx) => {
+        const res = await connStore.update(
+          connId,
+          p.userId,
+          {
+            label: body.label?.trim() || undefined,
+            secret: body.secret?.trim() || undefined,
+          },
+          { db: tx },
+        );
+        if (res) {
+          await auditStore.record(
+            {
+              action: "connection.updated",
+              actorUserId: p.userId,
+              actorRole: p.role,
+              targetType: "connection",
+              targetId: connId,
+              metadata: { hasSecretUpdate: Boolean(body.secret) },
+              requestId: c.get("requestId"),
+            },
+            { db: tx },
+          );
+        }
+        return res;
+      });
+      if (!updated) {
+        return problemJson(c, problem(404, "Not Found", "Connection not found", "not_found"));
+      }
+      return c.json(updated);
+    } catch {
+      return problemJson(c, problem(400, "Bad Request", "Failed to update connection", "invalid_params"));
+    }
+  });
+
+  // FX Rate lookup (e.g. GET /v1/fx/rate?from=USD&to=BRL)
+  app.get("/v1/fx/rate", async (c) => {
+    const from = (c.req.query("from") || "USD").toUpperCase();
+    const to = (c.req.query("to") || "BRL").toUpperCase();
+    if (from === to) {
+      return c.json({ from, to, rate: 1 });
+    }
+    // Fixed fallback reference rate for BRL if no external ticker is configured (e.g. 1 USD = 5.50 BRL)
+    const BRL_REF_RATE = 5.5;
+    let rate: number = to === "BRL" ? BRL_REF_RATE : 1;
+    if (from === "BRL" && to === "USD") rate = 1 / BRL_REF_RATE;
+    return c.json({ from, to, rate });
   });
 
   // Quotas list: latest persisted snapshot per connection (real quota read).

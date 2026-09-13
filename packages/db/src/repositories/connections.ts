@@ -178,6 +178,28 @@ export class PostgresConnectionStore {
       .limit(opts.limit ?? 1000);
   }
 
+  /**
+   * Resolve a provider row by its UUID id OR its providerKey (e.g. "ollama-claude/api").
+   * Allows clients to submit either an exact UUID or the well-known provider key.
+   */
+  async resolveProvider(
+    providerIdOrKey: string,
+    opts: { db?: DB } = {},
+  ): Promise<{ id: string; providerKey: string; connectorId: string } | null> {
+    const handle = opts.db ?? this.db;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(providerIdOrKey);
+    const [row] = await handle
+      .select({
+        id: quotaProviders.id,
+        providerKey: quotaProviders.providerKey,
+        connectorId: quotaProviders.connectorId,
+      })
+      .from(quotaProviders)
+      .where(isUuid ? eq(quotaProviders.id, providerIdOrKey) : eq(quotaProviders.providerKey, providerIdOrKey))
+      .limit(1);
+    return row ?? null;
+  }
+
   /** Connector id for a provider row (collector routing), or null. */
   async providerConnectorId(providerId: string, opts: { db?: DB } = {}): Promise<string | null> {
     const handle = opts.db ?? this.db;
@@ -187,6 +209,33 @@ export class PostgresConnectionStore {
       .where(eq(quotaProviders.id, providerId))
       .limit(1);
     return row?.connectorId ?? null;
+  }
+
+  /**
+   * Update a connection's label and optionally its secret (re-encrypted with KEK).
+   * Returns the updated ConnectionView, or null when not found / not owned.
+   */
+  async update(
+    id: string,
+    userId: string,
+    input: { label?: string; secret?: string },
+    opts: { db?: DB } = {},
+  ): Promise<ConnectionView | null> {
+    const handle = opts.db ?? this.db;
+    const values: Record<string, unknown> = { updatedAt: new Date() };
+    if (input.label !== undefined) values.label = input.label;
+    if (input.secret !== undefined && input.secret.trim() !== "") {
+      values.secretCipher = encryptSecret(input.secret.trim(), this.kek);
+    }
+    const result = await handle
+      .update(connections)
+      .set(values)
+      .where(and(eq(connections.id, id), eq(connections.userId, userId)))
+      .returning({ id: connections.id });
+    if (result.length === 0) return null;
+
+    const views = await this.listByUserView(userId, { db: handle, limit: 1000 });
+    return views.find((v) => v.id === id) ?? null;
   }
 
   /**

@@ -89,12 +89,20 @@ let setupRequired = false;
 export function setSetupRequired(value: boolean): void {
   setupRequired = value;
 }
+export function isSetupRequired(): boolean {
+  return setupRequired;
+}
 
 router.beforeEach((to) => {
   const token = safeGetItem("llm-quota.token");
   // First run: everything funnels to /setup except the invite flow.
   if (setupRequired && to.name !== "setup" && to.name !== "invite") {
     return { name: "setup" };
+  }
+  // Landing route is bypassed: direct to setup (if required) or login/dashboard
+  if (to.name === "landing") {
+    if (setupRequired) return { name: "setup" };
+    return token ? { name: "dashboard" } : { name: "login" };
   }
   if (to.meta.public) {
     // Logged-in users skip landing/login.

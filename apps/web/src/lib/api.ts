@@ -15,12 +15,14 @@ export interface QuotaView {
   id: string;
   connectionId: string;
   kind: "percent" | "credits";
+  window?: string;
   usedPercent: number;
   remainingPercent: number;
   usedAmount?: number;
   remainingAmount?: number;
   currency?: string;
   resetAt?: string;
+  resetsAt?: string;
 }
 
 export interface ConnectionView {
@@ -268,6 +270,20 @@ export class ApiClient {
     return body.data ?? [];
   }
 
+  async testConnection(input: {
+    providerId: string;
+    connectionType?: "api" | "oauth";
+    secret: string;
+    baseUrl?: string;
+  }): Promise<{ ok: boolean; quota?: unknown }> {
+    return this.handle<{ ok: boolean; quota?: unknown }>(
+      await this.http.post(`${this.base}/v1/connections/test`, JSON.stringify(input), {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
   async createConnection(input: {
     providerId: string;
     label?: string;
@@ -282,8 +298,26 @@ export class ApiClient {
     );
   }
 
+  async updateConnection(
+    id: string,
+    input: { label?: string; secret?: string },
+  ): Promise<ConnectionView> {
+    return this.handle<ConnectionView>(
+      await this.http.patch(`${this.base}/v1/connections/${id}`, JSON.stringify(input), {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
   async deleteConnection(id: string): Promise<void> {
     return this.handle<void>(await this.http.delete(`${this.base}/v1/connections/${id}`, this.auth()));
+  }
+
+  async getFxRate(to = "BRL", from = "USD"): Promise<{ from: string; to: string; rate: number }> {
+    return this.handle<{ from: string; to: string; rate: number }>(
+      await this.http.get(`${this.base}/v1/fx/rate?from=${from}&to=${to}`, this.auth()),
+    );
   }
 
   /** Revoke the current session server-side. */
@@ -453,5 +487,45 @@ export class ApiClient {
       await this.http.get(`${this.base}/v1/audit${q ? `?${q}` : ""}`, this.auth()),
     );
     return { data: body.data ?? [], nextCursor: body.next_cursor };
+  }
+
+  // ---- System Settings & Operations (Admin) --------------------------------
+
+  async getAdminSettings(): Promise<{
+    collectIntervalMs: number;
+    tls: {
+      active: boolean;
+      managedByProxy: boolean;
+      certPath: string | null;
+    };
+    instance: {
+      uptimeSeconds: number;
+      nodeVersion: string;
+    };
+  }> {
+    return this.handle(
+      await this.http.get(`${this.base}/v1/admin/settings`, this.auth()),
+    );
+  }
+
+  async updateAdminSettings(input: { collectIntervalMs: number }): Promise<{ ok: boolean; collectIntervalMs: number }> {
+    return this.handle(
+      await this.http.patch(`${this.base}/v1/admin/settings`, JSON.stringify(input), {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
+  }
+
+  async syncCollectorNow(): Promise<{
+    ok: boolean;
+    result: { collected: number; skipped: number; failed: number };
+  }> {
+    return this.handle(
+      await this.http.post(`${this.base}/v1/admin/collector/sync-now`, "{}", {
+        ...this.auth(),
+        "Content-Type": "application/json",
+      }),
+    );
   }
 }

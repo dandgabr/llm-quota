@@ -69,6 +69,7 @@ export async function runCollectPass(
   now: Date = new Date(),
   spreadMs = 1500,
   snapshots?: SnapshotSink,
+  logger?: (msg: string) => void,
 ): Promise<CollectResult> {
   // 1. Decide which connections are due per window.
   const due: { conn: CollectableConnection; at: Date }[] = [];
@@ -109,7 +110,8 @@ export async function runCollectPass(
         connectionId: item.conn.id,
         connectionType: connector.connectionType,
         apiKey: item.conn.secret,
-      });
+        window: item.conn.window,
+      } as Parameters<typeof connector.fetchQuota>[0]);
 
       // Normalize into the domain summary (wire normalization, ADR-007).
       const summary = summarizeQuota(snapshot);
@@ -162,8 +164,12 @@ export async function runCollectPass(
       }
       collected += 1;
       nextRuns.push({ connectionId: item.conn.id, at: run.at.toISOString() });
-    } catch {
+    } catch (err) {
       failed += 1;
+      const msg = err instanceof Error ? err.message : String(err);
+      const errLine = `[collector] connection=${item.conn.id} (${item.conn.connectorId}) fetch failed: ${msg}`;
+      if (logger) logger(errLine);
+      else console.error(errLine);
     }
   }
 

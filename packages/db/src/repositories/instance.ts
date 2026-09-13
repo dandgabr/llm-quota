@@ -87,4 +87,24 @@ export class PostgresInstanceStore {
     );
     return res.rows[0]?.id ?? null;
   }
+
+  /** Read a dynamic system configuration setting. */
+  async getSetting<T = unknown>(key: string, opts: { db?: DB } = {}): Promise<T | null> {
+    const handle = opts.db ?? this.db;
+    const res = await handle.execute<{ value: T }>(
+      sql`SELECT value FROM system_settings WHERE key = ${key} LIMIT 1`,
+    );
+    return res.rows[0]?.value ?? null;
+  }
+
+  /** Write a dynamic system configuration setting. */
+  async setSetting(key: string, value: unknown, opts: { db?: DB } = {}): Promise<void> {
+    const handle = opts.db ?? this.db;
+    await handle.execute(
+      sql`INSERT INTO system_settings (key, value, updated_at)
+          VALUES (${key}, ${JSON.stringify(value)}::jsonb, now())
+          ON CONFLICT (key) DO UPDATE
+          SET value = EXCLUDED.value, updated_at = now()`,
+    );
+  }
 }

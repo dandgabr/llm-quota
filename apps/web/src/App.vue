@@ -47,6 +47,26 @@ async function logout() {
 
 <template>
   <div class="shell" :class="{ bare }">
+    <aside v-if="bare" class="bare-controls" aria-label="Controls">
+      <button class="btn-ghost" type="button" :aria-label="t('app.toggleTheme')" @click="toggle()">
+        {{ themeUi.theme === "dark" ? "◐ dark" : "◐ light" }}
+      </button>
+      <select
+        class="locale"
+        data-testid="locale-switch"
+        :value="ui.locale"
+        :aria-label="t('app.language')"
+        @change="switchLocale(($event.target as HTMLSelectElement).value as 'en' | 'pt-BR')"
+      >
+        <option value="en">
+          EN
+        </option>
+        <option value="pt-BR">
+          PT-BR
+        </option>
+      </select>
+    </aside>
+
     <header
       v-if="!bare"
       class="topbar"
@@ -126,6 +146,13 @@ async function logout() {
 }
 .shell.bare {
   max-width: none;
+}
+.bare-controls {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
 }
 .topbar {
   display: flex;

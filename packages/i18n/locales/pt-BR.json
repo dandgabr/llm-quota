@@ -29,6 +29,9 @@
     "password": "Senha",
     "confirmPassword": "Confirmar senha",
     "passwordMismatch": "As senhas não coincidem.",
+    "passwordRulesTitle": "Requisitos da senha",
+    "passwordRuleMinLength": "Pelo menos 12 caracteres",
+    "passwordRuleMatch": "As senhas coincidem",
     "createAdmin": "Criar administrador",
     "setupError": "Falha na configuração. Verifique o código e tente novamente.",
     "doneTitle": "Tudo pronto.",
@@ -79,6 +82,16 @@
   "connections": {
     "title": "Conexões de provedores",
     "add": "Adicionar conexão",
+    "edit": "Editar conexão",
+    "delete": "Excluir",
+    "deleteConfirm": "Tem certeza que deseja excluir esta conexão?",
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "secretOptional": "Nova chave de API (deixe em branco para manter a atual)",
+    "test": "Testar conexão",
+    "testing": "Testando conexão…",
+    "testSuccess": "Conexão validada com sucesso!",
+    "testFailed": "Falha na validação da conexão.",
     "label": "Rótulo",
     "noConnections": "Nenhuma conexão de provedor ainda.",
     "status": {
@@ -96,8 +109,12 @@
       "daily": "Diária",
       "weekly": "Semanal",
       "monthly": "Mensal",
-      "lifetime": "Vitalício"
-    }
+      "lifetime": "Vitalício",
+      "credits": "Créditos"
+    },
+    "resetsIn": "Reinicia {time}",
+    "expiresIn": "Expira {time}",
+    "noExpiration": "Sem expiração"
   },
   "history": {
     "title": "Histórico de gastos",
@@ -106,9 +123,34 @@
     "monthly": "Mensal"
   },
   "admin": {
+    "title": "Administração do Sistema",
     "users": "Usuários",
     "audit": "Log de auditoria",
-    "identityProviders": "Provedores de identidade"
+    "identityProviders": "Provedores de identidade",
+    "systemSettings": "Configurações do Sistema",
+    "collector": "Coleta e Sincronização",
+    "collectorDesc": "Controle a frequência em que as cotas de todos os provedores são verificadas.",
+    "refreshInterval": "Intervalo de atualização",
+    "seconds": "segundos",
+    "minutes": "minutos",
+    "save": "Salvar alterações",
+    "saving": "Salvando…",
+    "saved": "Configurações salvas com sucesso!",
+    "syncNow": "Sincronizar Agora",
+    "syncing": "Sincronizando cotas…",
+    "syncSuccess": "Sincronização concluída com sucesso!",
+    "syncResult": "Coletadas: {collected} · Ignoradas: {skipped} · Falhas: {failed}",
+    "tls": "Segurança e Certificados TLS",
+    "tlsDesc": "Status da criptografia em trânsito e validade do certificado digital.",
+    "tlsActive": "HTTPS / TLS Ativo",
+    "tlsManaged": "Gerenciado por Ingress / Proxy Reverso",
+    "tlsValidUntil": "Válido até",
+    "tlsDaysRemaining": "Dias restantes",
+    "days": "dias",
+    "integrity": "Integridade e Auditoria",
+    "integrityDesc": "Cadeia de logs criptograficamente encadeada com hashes SHA-256.",
+    "eventsTotal": "Total de eventos registrados",
+    "verifyIntegrity": "Verificar integridade da cadeia"
   },
   "audit": {
     "title": "Log de auditoria",

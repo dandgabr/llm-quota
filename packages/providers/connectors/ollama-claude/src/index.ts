@@ -13,15 +13,28 @@ import { createFetchHttpClient } from "@llm-quota/providers";
  */
 
 /** Default base URL for the Ollama Claude quota endpoint (envar overridable). */
-const DEFAULT_BASE_URL = "https://api.ollamacloud.com";
+const DEFAULT_BASE_URL = "https://ollama.com";
+
+interface QuotaWindowDetails {
+  used_percent?: number;
+  remaining_percent?: number;
+  usage?: number;
+  used?: number;
+  limit?: number;
+  total?: number;
+  resets_at?: string;
+  reset_at?: string;
+}
 
 /**
  * Response shape from the Ollama Claude quota endpoint (subset we consume).
+ * Supports both unified `quota`, cloud `limits.session`/`limits.weekly`, and windowed fields.
  */
 interface OllamaClaudeQuotaResponse {
   quota?: {
     /** 0..100 used percentage when the plan is usage-percent based. */
     used_percent?: number;
+    usage?: number;
     /** Monetary account credit (USD) when the plan is credit based. */
     total_credit?: number;
     /** Amount used (USD) for a capped-quota plan. */
@@ -30,35 +43,76 @@ interface OllamaClaudeQuotaResponse {
     limit_credit?: number;
     currency?: string;
     reset_at?: string;
+    resets_at?: string;
   };
+  limits?: {
+    session?: QuotaWindowDetails;
+    weekly?: QuotaWindowDetails;
+    monthly?: QuotaWindowDetails;
+  };
+  session?: QuotaWindowDetails;
+  weekly?: QuotaWindowDetails;
+  monthly?: QuotaWindowDetails;
   display_name?: string;
 }
 
 /** Map a raw provider payload to a normalized `QuotaSnapshot`. */
-export function parseOllamaClaudeQuota(body: unknown): QuotaSnapshot {
-  const { quota } = (body ?? {}) as OllamaClaudeQuotaResponse;
+export function parseOllamaClaudeQuota(body: unknown, targetWindow?: string): QuotaSnapshot {
+  const raw = (body ?? {}) as OllamaClaudeQuotaResponse;
+
+  let windowBlock: QuotaWindowDetails | undefined;
+  if (targetWindow === "session") {
+    windowBlock = raw.limits?.session ?? raw.session;
+  } else if (targetWindow === "weekly") {
+    windowBlock = raw.limits?.weekly ?? raw.weekly;
+  } else if (targetWindow === "monthly") {
+    windowBlock = raw.limits?.monthly ?? raw.monthly;
+  }
+
+  const quota = windowBlock ?? raw.quota ?? raw.limits?.weekly ?? raw.limits?.session ?? raw.session ?? raw.weekly ?? raw.monthly;
   if (!quota) {
     return { kind: "percent", usedPercent: 0, remainingPercent: 100 };
   }
 
+  const resetAt =
+    ("reset_at" in quota ? quota.reset_at : undefined) ??
+    ("resets_at" in quota ? quota.resets_at : undefined);
+
   // Credit-based plans carry a currency (or a credit amount).
-  if (quota.currency || quota.total_credit != null || quota.used_credit != null) {
+  const totalCredit = "total_credit" in quota ? quota.total_credit : "total" in quota ? quota.total : undefined;
+  const usedCredit = "used_credit" in quota ? quota.used_credit : "used" in quota ? quota.used : undefined;
+  const limitCredit = "limit_credit" in quota ? quota.limit_credit : "limit" in quota ? quota.limit : undefined;
+  const currency = "currency" in quota && typeof quota.currency === "string" ? quota.currency : undefined;
+
+  if (currency || totalCredit != null || usedCredit != null) {
     return {
       kind: "credits",
-      currency: quota.currency ?? "USD",
-      total: quota.total_credit,
-      used: quota.used_credit,
-      limit: quota.limit_credit,
-      resetsAt: quota.reset_at,
+      currency: currency ?? "USD",
+      total: totalCredit,
+      used: usedCredit,
+      limit: limitCredit,
+      resetsAt: resetAt,
     };
   }
 
-  const usedPercent = typeof quota.used_percent === "number" ? quota.used_percent : 0;
+  const rawPercent =
+    typeof quota.used_percent === "number"
+      ? quota.used_percent
+      : typeof quota.usage === "number"
+        ? quota.usage
+        : 0;
+
+  const usedPercent = rawPercent;
+  const remainingPercent =
+    "remaining_percent" in quota && typeof quota.remaining_percent === "number"
+      ? quota.remaining_percent
+      : Math.max(0, 100 - usedPercent);
+
   return {
     kind: "percent",
     usedPercent,
-    remainingPercent: Math.max(0, 100 - usedPercent),
-    resetsAt: quota.reset_at,
+    remainingPercent,
+    resetsAt: resetAt,
   };
 }
 
@@ -80,15 +134,23 @@ export const ollamaClaudeConnector: ProviderConnector = {
   async fetchQuota(context: ProviderContext): Promise<QuotaSnapshot> {
     const { apiKey, baseUrl = DEFAULT_BASE_URL } = context;
     const http = context.http ?? createFetchHttpClient();
-    const url = `${baseUrl}/v1/quota`;
-    const res = await http.get(url, {
+    // Try https://ollama.com/api/usage first, then fallback to /v1/quota
+    const usageUrl = `${baseUrl}/api/usage`;
+    let res = await http.get(usageUrl, {
       Accept: "application/json",
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     });
+    if (!res.ok && res.status === 404) {
+      const fallbackUrl = `${baseUrl}/v1/quota`;
+      res = await http.get(fallbackUrl, {
+        Accept: "application/json",
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      });
+    }
     if (!res.ok) {
       throw new Error(`Ollama Claude quota request failed (${res.status})`);
     }
-    return parseOllamaClaudeQuota(await res.json());
+    return parseOllamaClaudeQuota(await res.json(), (context as { window?: string }).window);
   },
 
   async discoverLabel(context: ProviderContext): Promise<string | null> {

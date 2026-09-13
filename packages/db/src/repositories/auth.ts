@@ -297,7 +297,7 @@ export class PostgresAuthStore {
     const handle = opts.db ?? this.db;
     const rows = await handle
       .delete(authLoginAttempts)
-      .where(sql`${authLoginAttempts.lastFailedAt} < ${now} - make_interval(secs => ${ttlSeconds})`)
+      .where(sql`${authLoginAttempts.lastFailedAt} < ${now}::timestamptz - make_interval(secs => ${ttlSeconds})`)
       .returning({ id: authLoginAttempts.id });
     return rows.length;
   }

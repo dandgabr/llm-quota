@@ -99,6 +99,20 @@ describe("ollama-claude: parseOllamaClaudeQuota", () => {
     const q = parseOllamaClaudeQuota({});
     expect(q).toEqual({ kind: "percent", usedPercent: 0, remainingPercent: 100 });
   });
+
+  it("maps cloud limits with session and weekly usage percentages", () => {
+    const cloudPayload = {
+      limits: {
+        session: { usage: 0 },
+        weekly: { usage: 1 },
+      },
+    };
+    const sessionQuota = parseOllamaClaudeQuota(cloudPayload, "session");
+    expect(sessionQuota).toEqual({ kind: "percent", usedPercent: 0, remainingPercent: 100, resetsAt: undefined });
+
+    const weeklyQuota = parseOllamaClaudeQuota(cloudPayload, "weekly");
+    expect(weeklyQuota).toEqual({ kind: "percent", usedPercent: 1, remainingPercent: 99, resetsAt: undefined });
+  });
 });
 
 describe("ollama-claude: parseOllamaClaudeLabel", () => {

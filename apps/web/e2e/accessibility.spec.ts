@@ -16,6 +16,12 @@ test.describe("accessibility (WCAG 2.2 AA — ADR-011)", () => {
       const critical = results.violations.filter((v) => v.impact === "critical");
       expect(critical).toEqual([]);
     });
+
+    test(`no axe violations on connections (${theme})`, async ({ seededPage, page }) => {
+      await seededPage("/connections", { role: "user", theme });
+      const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+      expect(results.violations).toEqual([]);
+    });
   }
 
   test("focus is visible when tabbing through the topbar", async ({ seededPage, page }) => {

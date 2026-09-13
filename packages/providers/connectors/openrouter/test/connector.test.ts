@@ -63,6 +63,11 @@ describe("openrouter: parseOpenRouterQuota", () => {
     expect(q).toEqual({ kind: "credits", currency: "USD", total: 99 });
   });
 
+  it("maps data.total_credits and data.total_usage even when 0", () => {
+    const q = parseOpenRouterQuota({ data: { total_credits: 0, total_usage: 0 } });
+    expect(q).toEqual({ kind: "credits", currency: "USD", total: 0, used: 0 });
+  });
+
   it("maps usage_ratio into a percent shape", () => {
     const q = parseOpenRouterQuota({ usage_ratio: 0.25 });
     expect(q).toEqual({ kind: "percent", usedPercent: 25, remainingPercent: 75 });

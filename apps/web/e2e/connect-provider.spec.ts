@@ -17,7 +17,24 @@ test.describe("connect provider journey", () => {
     await seededPage("/connections", { role: "user" });
     await page.getByLabel(/api key/i).fill("sk-test-123");
     await page.getByRole("button", { name: /add connection/i }).click();
-    await expect(page.getByText("ollama-claude/api").first()).toBeVisible();
+    await expect(page.locator(".list-card").getByText("ollama-claude/api").first()).toBeVisible();
+  });
+
+  test("tests connection with success feedback", async ({ seededPage, page }) => {
+    await seededPage("/connections", { role: "user" });
+    const testBtn = page.getByRole("button", { name: /test connection/i });
+    await expect(testBtn).toBeDisabled();
+    await page.getByLabel(/api key/i).fill("sk-valid-key");
+    await expect(testBtn).toBeEnabled();
+    await testBtn.click();
+    await expect(page.getByText(/connection validated successfully/i)).toBeVisible();
+  });
+
+  test("tests connection with failure feedback", async ({ seededPage, page }) => {
+    await seededPage("/connections", { role: "user" });
+    await page.getByLabel(/api key/i).fill("sk-invalid-key");
+    await page.getByRole("button", { name: /test connection/i }).click();
+    await expect(page.getByText(/invalid api key|connection validation failed/i)).toBeVisible();
   });
 
   test("the API key is never rendered in the DOM", async ({ seededPage, page }) => {

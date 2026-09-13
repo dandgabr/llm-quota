@@ -3,7 +3,7 @@
  * fresh database is usable. Run with `pnpm --filter @llm-quota/db seed`.
  */
 
-import { createDb, resolveDatabaseConfig } from "./client.js";
+import { createDb, resolveDatabaseConfig, type DB } from "./client.js";
 import { quotaProviders, users } from "./schema/index.js";
 
 /** Provider definitions registered by the seed (v1 connectors). */
@@ -11,6 +11,22 @@ export const DEFAULT_PROVIDERS = [
   { providerKey: "ollama-claude/api", name: "Ollama Claude", connectorId: "ollama-claude/api", connectionType: "api" as const },
   { providerKey: "openrouter/api", name: "OpenRouter", connectorId: "openrouter/api", connectionType: "api" as const },
 ];
+
+/**
+ * Seed default quota providers into a database handle/instance. Idempotent:
+ * rows already present for a provider key + type are left untouched.
+ */
+export async function seedProviders(db: DB): Promise<number> {
+  let seeded = 0;
+  for (const p of DEFAULT_PROVIDERS) {
+    await db
+      .insert(quotaProviders)
+      .values(p)
+      .onConflictDoNothing({ target: [quotaProviders.providerKey, quotaProviders.connectionType] });
+    seeded += 1;
+  }
+  return seeded;
+}
 
 /**
  * Seed default quota providers into a fresh database. Idempotent: rows already
@@ -24,14 +40,7 @@ export async function seed(): Promise<number> {
   const config = resolveDatabaseConfig();
   const handle = createDb(config);
   const db = handle.db;
-  let seeded = 0;
-  for (const p of DEFAULT_PROVIDERS) {
-    await db
-      .insert(quotaProviders)
-      .values(p)
-      .onConflictDoNothing({ target: [quotaProviders.providerKey, quotaProviders.connectionType] });
-    seeded += 1;
-  }
+  const seeded = await seedProviders(db);
   const adminEmail = process.env.SEED_ADMIN_EMAIL;
   if (adminEmail) {
     const role = (process.env.SEED_ADMIN_ROLE ?? "admin") as "user" | "supervisor" | "admin";

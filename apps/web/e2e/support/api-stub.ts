@@ -270,6 +270,18 @@ const server = createServer(async (req, res) => {
       data: [{ id: "sess-1", createdAt: "2026-09-11T00:00:00Z" }],
     });
   }
+  if (url.pathname === "/v1/connections/test" && req.method === "POST") {
+    if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
+    const body = await readBody(req);
+    const parsed = JSON.parse(body || "{}") as { secret?: string; providerId?: string };
+    if (!parsed.secret || !parsed.providerId) {
+      return json(res, 400, { title: "Bad Request", status: 400 });
+    }
+    if (parsed.secret.includes("invalid")) {
+      return json(res, 400, { title: "Bad Request", detail: "Invalid API key", status: 400 });
+    }
+    return json(res, 200, { ok: true, quota: { kind: "percent", usedPercent: 15, remainingPercent: 85 } });
+  }
   if (url.pathname === "/v1/quotas" || url.pathname === "/v1/connections") {
     if (!role) return json(res, 401, { title: "Unauthorized", status: 401 });
     if (req.method === "POST") {

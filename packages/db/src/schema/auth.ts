@@ -110,6 +110,13 @@ export const instanceSettings = pgTable("instance_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Dynamic instance configuration (collector refresh interval, notices, etc.). */
+export const systemSettings = pgTable("system_settings", {
+  key: varchar("key", { length: 64 }).primaryKey(),
+  value: jsonb("value").$type<unknown>().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** FIDO2 / WebAuthn credential (passkey / security key). */
 export const webauthnCredentials = pgTable("webauthn_credentials", {
   id: id("id"),

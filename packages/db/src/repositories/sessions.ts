@@ -293,7 +293,7 @@ export async function sweepSessions(
   const rows = await db
     .delete(userSessions)
     .where(
-      sql`(${userSessions.revoked} = true OR ${userSessions.expiresAt} < ${now}) AND ${userSessions.createdAt} < ${now} - make_interval(secs => ${ttlSeconds})`,
+      sql`(${userSessions.revoked} = true OR ${userSessions.expiresAt} < ${now}) AND ${userSessions.createdAt} < ${now}::timestamptz - make_interval(secs => ${ttlSeconds})`,
     )
     .returning({ id: userSessions.id });
   return rows.length;

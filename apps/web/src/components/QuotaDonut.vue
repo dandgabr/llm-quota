@@ -2,8 +2,8 @@
 import { computed } from "vue";
 
 const props = withDefaults(
-  defineProps<{ percent: number; label?: string }>(),
-  { percent: 0, label: "" },
+  defineProps<{ percent: number; label?: string; value?: string }>(),
+  { percent: 0, label: "", value: undefined },
 );
 
 /** Which status tone applies to the remaining percent. */
@@ -26,7 +26,7 @@ const ring = computed(() => {
   <div
     class="donut"
     role="img"
-    :aria-label="`${label}: ${percent}% used`"
+    :aria-label="`${label}: ${value ?? `${percent}%`} used`"
   >
     <svg
       viewBox="0 0 100 100"
@@ -53,7 +53,9 @@ const ring = computed(() => {
         stroke-linecap="round"
       />
     </svg>
-    <strong class="tabular numeric">{{ percent }}%</strong>
+    <strong class="tabular numeric" :class="{ 'is-val': Boolean(value) }">
+      {{ value ?? `${percent}%` }}
+    </strong>
     <span class="micro caption">{{ label }}</span>
   </div>
 </template>
@@ -91,6 +93,9 @@ const ring = computed(() => {
   font-family: var(--font-display);
   font-size: 22px;
   font-weight: 700;
+}
+.numeric.is-val {
+  font-size: 16px;
 }
 .caption {
   position: absolute;

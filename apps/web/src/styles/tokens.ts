@@ -25,8 +25,8 @@ export const tokens = {
   "rose-300": "#E0C4C4",
   "sky-300": "#C7D4E8",
 
-  /** Primitives — single saturated accent + status */
-  "periwinkle-500": "#3E63DD", // ~4.6:1 on bone (UI 3:1 + text 4.5:1)
+  /** Primitives — single saturated accent + status (terracotta warm accent) */
+  "terracotta-500": "#A64824", // ~5.3:1 on bone, ~5.8:1 with white (WCAG AA)
   "fern-600": "#3E7A5C", // success / under-quota
   "brick-600": "#C44B3C", // danger / over-quota
   "ochre-600": "#A87C1F", // warning
@@ -47,7 +47,7 @@ export const tokens = {
   "text-muted": "var(--ink-500)",
 
   /** Semantic accent */
-  "accent-action": "var(--periwinkle-500)",
+  "accent-action": "var(--terracotta-500)",
   "accent-on-accent": "#FFFFFF",
 
   /** Status */
@@ -56,7 +56,7 @@ export const tokens = {
   "status-warning": "var(--ochre-600)",
 
   /** Chart fills */
-  "chart-fill-primary": "rgba(62,99,221,0.14)",
+  "chart-fill-primary": "rgba(166,72,36,0.14)",
   "chart-fill-track": "rgba(24,20,16,0.06)",
   "chart-gridline": "rgba(24,20,16,0.08)",
 

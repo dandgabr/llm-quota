@@ -155,6 +155,13 @@
       "when": 1789190000000,
       "tag": "0021_audit_chain_head_and_sweep",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1789193000000,
+      "tag": "0022_onboarding_grants",
+      "breakpoints": true
     }
   ]
 }
